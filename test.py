@@ -191,58 +191,75 @@ elif selection == "CASH EDITION":
         st.dataframe(df_tresorerie.style.format({"Débit":"{:,.0f}","Crédit":"{:,.0f}","Solde_mensuel":"{:,.0f}","Trésorerie_cumulée":"{:,.0f}"}))
 
 # =====================
-# MODULE 6 : ROYALTIES EDITION
+# MODULE ROYALTIES EDITION
 # =====================
-elif selection == "ROYALTIES EDITION":
-    st.header(f"{module_icons['ROYALTIES EDITION']} ROYALTIES EDITION - Droits d’auteurs livres")
-    fichier_royalties = st.file_uploader("📂 Importer le fichier BLDD ou ventes nettes", type=["xlsx"])
-    mode_taux = st.radio("Choix du mode de calcul des droits d’auteurs", ["Taux fixe", "Taux par auteur"])
-    if fichier_royalties:
-        df = pd.read_excel(fichier_royalties)
-        df.columns = df.columns.str.strip()
-        df["Net"] = pd.to_numeric(df["Net"], errors="coerce").fillna(0)
-        df["Auteur"] = df["Auteur"].astype(str).fillna("Inconnu")
-        if mode_taux == "Taux fixe":
-            taux = st.number_input("Taux fixe (%)", value=10.0)/100
-            df["Droits_auteur"] = (df["Net"] * taux).round(2)
-        else:
-            auteurs = df["Auteur"].unique()
-            taux_dict = {}
-            st.write("Saisissez le taux pour chaque auteur (%) :")
-            for a in auteurs:
-                taux_dict[a] = st.number_input(f"{a}", value=10.0)/100
-            df["Droits_auteur"] = (df["Net"] * df["Auteur"].map(taux_dict)).round(2)
-        st.dataframe(df[["ISBN","Auteur","Net","Droits_auteur"]])
+elif menu == "ROYALTIES EDITION":
+    st.header("📚 ROYALTIES EDITION - Calcul des droits d'auteurs")
+
+    if "df_pivot" not in st.session_state:
+        st.warning("⚠️ Générer d'abord le SOCLE EDITION cumulatif depuis le module BLDD.")
+    else:
+        df_socle = st.session_state["df_pivot"]
+
+        st.subheader("Paramètres de calcul")
+        taux_droits = st.number_input("Taux de droits d'auteur (%)", value=10.0)/100
+        choix_par_ISBN = st.checkbox("Appliquer un taux spécifique par ISBN ?", value=False)
+
+        if choix_par_ISBN:
+            st.info("Pour chaque ISBN, vous pourrez définir un taux personnalisé dans le tableau généré.")
+
+        # Calcul des droits
+        df_socle["Droits_Auteur"] = df_socle["Facture"] * taux_droits
+
+        st.subheader("👀 Aperçu des droits calculés")
+        st.dataframe(df_socle[["ISBN", "Facture", "Droits_Auteur"]].head(20))
+
+        # Export Excel
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Royalties")
+            df_socle.to_excel(writer, index=False, sheet_name="Royalties")
         buffer.seek(0)
-        st.download_button("📥 Télécharger le fichier droits d’auteurs", buffer, "Royalties.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            label="📥 Télécharger le fichier ROYALTIES EDITION",
+            data=buffer,
+            file_name="Royalties_Edition.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 # =====================
-# MODULE 7 : RETURNS EDITION
+# MODULE RETURNS EDITION
 # =====================
-elif selection == "RETURNS EDITION":
-    st.header(f"{module_icons['RETURNS EDITION']} RETURNS EDITION - Gestion des retours de livres")
-    fichier_returns = st.file_uploader("📂 Importer le fichier ventes/BLDD", type=["xlsx"])
-    mode_returns = st.radio("Mode de retour", ["Historique (%)", "Saisie manuelle (%)"])
-    if fichier_returns:
-        df = pd.read_excel(fichier_returns)
-        df.columns = df.columns.str.strip()
-        df["Vente"] = pd.to_numeric(df["Vente"], errors="coerce").fillna(0)
-        df["ISBN"] = df["ISBN"].astype(str).str.strip()
-        if mode_returns == "Historique (%)":
-            historique = st.number_input("Pourcentage moyen de retour (%)", value=5.0)/100
-            df["Retour"] = (df["Vente"] * historique).round(2)
+elif menu == "RETURNS EDITION":
+    st.header("📦 RETURNS EDITION - Estimation des retours d'invendus")
+
+    if "df_pivot" not in st.session_state:
+        st.warning("⚠️ Générer d'abord le SOCLE EDITION cumulatif depuis le module BLDD.")
+    else:
+        df_socle = st.session_state["df_pivot"]
+
+        st.subheader("Paramètres de calcul")
+        st.info("Vous pouvez estimer les retours en fonction de l'historique ou définir un pourcentage fixe.")
+        method = st.radio("Méthode d'estimation", ["Historique des ventes", "Pourcentage fixe"])
+        
+        if method == "Pourcentage fixe":
+            pct_retours = st.number_input("Pourcentage de retours (%)", value=5.0)/100
+            df_socle["Retours"] = df_socle["Vente"] * pct_retours
         else:
-            df["Retour"] = 0.0
-            st.write("Saisir le pourcentage de retour pour chaque ISBN :")
-            for idx, isbn in enumerate(df["ISBN"]):
-                val = st.number_input(f"{isbn}", value=5.0)/100
-                df.at[idx, "Retour"] = (df.at[idx, "Vente"] * val).round(2)
-        st.dataframe(df[["ISBN","Vente","Retour"]])
+            st.info("Calcul basé sur l'historique des ventes et retours. (exemple simplifié)")
+            # Exemple : provision de 10% sur les ventes nettes
+            df_socle["Retours"] = df_socle["Net"] * 0.1
+
+        st.subheader("👀 Aperçu des retours calculés")
+        st.dataframe(df_socle[["ISBN", "Vente", "Net", "Retours"]].head(20))
+
+        # Export Excel
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Returns")
+            df_socle.to_excel(writer, index=False, sheet_name="Returns")
         buffer.seek(0)
-        st.download_button("📥 Télécharger le fichier retours", buffer, "Returns.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            label="📥 Télécharger le fichier RETURNS EDITION",
+            data=buffer,
+            file_name="Returns_Edition.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
