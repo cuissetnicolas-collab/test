@@ -210,20 +210,25 @@ elif page == "RETURNS EDITION":
         st.subheader("📋 Comptes disponibles dans les données")
         st.write(sorted(df["Compte"].unique()))
         
-        # --- Comptes à filtrer ---
-        comptes_ventes = ["701"]          # comptes de ventes
-        mask_ventes = df["Compte"].str.startswith(tuple(comptes_ventes))
-        mask_retours = df["Compte"].str.startswith("709000")
-        mask_remises = df["Compte"].str.startswith("709100")
+        # --- Définir les plages de comptes ---
+        # Adapter ces plages selon ton plan comptable
+        ventes_range = range(0, 101)      # comptes ventes : [0 - 100]
+        remises_range = range(100, 200)   # comptes remises : [100 - 199]
+        retours_range = range(200, 220)   # comptes retours : [200 - 219]
+        
+        # --- Masques pour filtrer les comptes ---
+        mask_ventes = df["Compte"].isin([str(i) for i in ventes_range])
+        mask_remises = df["Compte"].isin([str(i) for i in remises_range])
+        mask_retours = df["Compte"].isin([str(i) for i in retours_range])
         
         # --- Préparer les colonnes Débit/Crédit ---
         df["Débit"] = df["Débit"].fillna(0)
         df["Crédit"] = df["Crédit"].fillna(0)
         
         # --- Calcul des soldes ---
-        df["Solde_ventes"] = df["Débit"] - df["Crédit"]         # positif si vente
-        df["Solde_retours"] = df["Débit"] - df["Crédit"]        # positif si retour
-        df["Solde_remises"] = df["Crédit"] - df["Débit"]       # positif si remise
+        df["Solde_ventes"] = df["Débit"] - df["Crédit"]
+        df["Solde_retours"] = df["Débit"] - df["Crédit"]
+        df["Solde_remises"] = df["Crédit"] - df["Débit"]
         
         # --- Sommes ---
         ca_brut = df.loc[mask_ventes, "Solde_ventes"].sum()
@@ -235,7 +240,7 @@ elif page == "RETURNS EDITION":
         st.metric("📦 Retours", f"{total_retours:,.0f} €")
         st.metric("🏷️ Remises libraires", f"{remises:,.0f} €")
         
-        # --- Top retours par ISBN ---
+        # --- Vérification top retours par ISBN ---
         if mask_retours.any():
             df_retours_isbn = df.loc[mask_retours].copy()
             df_retours_isbn["Solde_retours"] = df_retours_isbn["Solde_retours"]
@@ -247,9 +252,9 @@ elif page == "RETURNS EDITION":
             st.subheader("Top retours par ISBN")
             st.dataframe(top_retours)
         else:
-            st.info("Aucun retour détecté pour les comptes commençant par 709000.")
+            st.info(f"Aucun retour détecté pour les comptes dans la plage {retours_range.start} - {retours_range.stop-1}.")
         
-        # --- Vérification remises (optionnel) ---
+        # --- Vérification top remises par ISBN ---
         if mask_remises.any():
             df_remises_isbn = df.loc[mask_remises].copy()
             df_remises_isbn["Solde_remises"] = df_remises_isbn["Solde_remises"]
@@ -261,7 +266,7 @@ elif page == "RETURNS EDITION":
             st.subheader("Top remises par ISBN")
             st.dataframe(top_remises)
         else:
-            st.info("Aucune remise détectée pour les comptes commençant par 709100.")
+            st.info(f"Aucune remise détectée pour les comptes dans la plage {remises_range.start} - {remises_range.stop-1}.")
 
 
 # =====================
