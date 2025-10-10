@@ -226,105 +226,64 @@ elif page == "RETURNS EDITION":
 
     df = st.session_state["df_pivot"].copy()
 
-    # ---- Conversion universelle avec padding ----
-    def format_compte(x):
+    # ---- Normalisation universelle des comptes ----
+    def normalize_compte(x):
+        """
+        Transforme tous les comptes pour qu'ils aient 9 chiffres.
+        - Si float/int → convertit en entier et zfill(9)
+        - Si string → nettoie et zfill(9)
+        """
         if pd.isna(x):
             return ""
         try:
-            x_int = int(float(x))  # convertit float/int
-            return str(x_int).zfill(9)  # force 9 chiffres
+            return str(int(float(x))).zfill(9)
         except:
             return str(x).strip().zfill(9)
 
-    df["Compte_str"] = df["Compte"].apply(format_compte)
+    df["Compte_norm"] = df["Compte"].apply(normalize_compte)
 
     # ---- Comptes exacts ----
+    compte_ventes = "701000000"        # Ajuster selon ton fichier
     compte_retours = "709000000"
     compte_remises = "709100000"
 
     # ---- Filtrage exact ----
-    retours = df[df["Compte_str"] == compte_retours]
-    remises = df[df["Compte_str"] == compte_remises]
+    ventes = df[df["Compte_norm"].str.startswith(compte_ventes[:3])]
+    retours = df[df["Compte_norm"] == compte_retours]
+    remises = df[df["Compte_norm"] == compte_remises]
 
-    # ---- Calculs solde global (Crédit - Débit) ----
+    # ---- Calculs ----
+    ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
     total_retours = retours["Crédit"].sum() - retours["Débit"].sum()
     total_remises = remises["Crédit"].sum() - remises["Débit"].sum()
+    ca_net = ca_brut - total_retours - total_remises
 
-    st.markdown("### 📊 Résultat exact par compte")
-    col1, col2 = st.columns(2)
-    col1.metric("Retours (709000000)", f"{total_retours:,.0f} €")
-    col2.metric("Remises (709100000)", f"{total_remises:,.0f} €")
+    # ---- Affichage résumé global ----
+    st.markdown("### 📊 Résumé global")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("CA brut", f"{ca_brut:,.0f} €")
+    col2.metric("Retours (709000000)", f"{total_retours:,.0f} €")
+    col3.metric("Remises (709100000)", f"{total_remises:,.0f} €")
+    col4.metric("CA net", f"{ca_net:,.0f} €")
 
-    # ---- Affiche la table pour vérifier ----
-    st.write("Vérification des comptes après conversion :")
-    st.write(df[["Compte", "Compte_str"]].drop_duplicates())
-# =====================
-# CASH EDITION
-# =====================
-elif page == "CASH EDITION":
-    st.header("💰 CASH EDITION - Trésorerie prévisionnelle")
-    if "df_pivot" not in st.session_state:
-        st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
-    else:
-        df_pivot = st.session_state["df_pivot"].copy()
+    # ---- Analyse par ISBN ----
+    st.markdown("### 🔎 Analyse par ISBN")
+    ventes_isbn = ventes.groupby("Code_Analytique", as_index=False).agg({"Crédit": "sum"}).rename(columns={"Crédit": "Ventes"})
+    retours_isbn = retours.groupby("Code_Analytique", as_index=False).agg({"Crédit": "sum"}).rename(columns={"Crédit": "Retours"})
 
-        # Date de départ
-        date_debut = st.date_input("Date de départ de la trésorerie", pd.to_datetime("2025-04-01"))
+    df_merge = pd.merge(ventes_isbn, retours_isbn, on="Code_Analytique", how="outer").fillna(0)
+    df_merge["Taux_retour_%"] = np.where(df_merge["Ventes"] != 0, (df_merge["Retours"] / df_merge["Ventes"]) * 100, 0)
 
-        # Nettoyage
-        df_pivot["Compte"] = df_pivot["Compte"].astype(str).str.strip()
-        df_pivot["Date"] = pd.to_datetime(df_pivot["Date"], errors="coerce")
-        df_pivot["Débit"] = pd.to_numeric(df_pivot["Débit"], errors="coerce").fillna(0)
-        df_pivot["Crédit"] = pd.to_numeric(df_pivot["Crédit"], errors="coerce").fillna(0)
+    st.dataframe(df_merge.sort_values("Taux_retour_%", ascending=False))
 
-        # Solde départ
-        comptes_bancaires = df_pivot[df_pivot["Compte"].str.startswith("5")]
-        solde_depart_df = comptes_bancaires[comptes_bancaires["Date"] <= pd.to_datetime(date_debut)]
-        solde_depart_total = solde_depart_df["Crédit"].sum() - solde_depart_df["Débit"].sum()
-        st.info(f"Solde de départ : {solde_depart_total:,.2f} €")
+    # ---- Graphique ----
+    fig = px.bar(df_merge, x="Code_Analytique", y="Taux_retour_%",
+                 title="Taux de retour par ISBN", labels={"Code_Analytique": "ISBN", "Taux_retour_%": "% Retours"})
+    st.plotly_chart(fig, use_container_width=True)
 
-        # Paramètres
-        horizon = st.slider("Horizon de projection (en mois)", 3, 24, 12)
-        croissance_ca = st.number_input("Croissance mensuelle du CA (%)", value=2.0) / 100
-        evolution_charges = st.number_input("Évolution mensuelle des charges (%)", value=1.0) / 100
-
-        # Flux hors banques
-        df_flux = df_pivot[~df_pivot["Compte"].str.startswith("5")].copy()
-        df_flux = df_flux.dropna(subset=["Date"])
-        df_flux = df_flux[df_flux["Date"] >= pd.to_datetime(date_debut)]
-        df_flux["Mois"] = df_flux["Date"].dt.to_period("M").astype(str)
-
-        flux_mensuel = df_flux.groupby("Mois").agg({"Débit": "sum", "Crédit": "sum"}).reset_index()
-        flux_mensuel["Solde_mensuel"] = flux_mensuel["Crédit"] - flux_mensuel["Débit"]
-        flux_mensuel = flux_mensuel.sort_values("Mois")
-
-        dernier_mois = pd.Period(flux_mensuel["Mois"].max(), freq="M") if not flux_mensuel.empty else pd.Period(date_debut, freq="M")
-        previsions = []
-        ca_actuel = flux_mensuel["Crédit"].iloc[-1] if not flux_mensuel.empty else 0
-        charges_actuelles = flux_mensuel["Débit"].iloc[-1] if not flux_mensuel.empty else 0
-
-        for i in range(1, horizon + 1):
-            prochain_mois = (dernier_mois + i).strftime("%Y-%m")
-            ca_actuel *= (1 + croissance_ca)
-            charges_actuelles *= (1 + evolution_charges)
-            solde_prevu = ca_actuel - charges_actuelles
-            previsions.append({
-                "Mois": prochain_mois,
-                "Débit": charges_actuelles,
-                "Crédit": ca_actuel,
-                "Solde_mensuel": solde_prevu
-            })
-
-        df_prev = pd.DataFrame(previsions)
-        df_tresorerie = pd.concat([flux_mensuel, df_prev], ignore_index=True)
-        df_tresorerie["Trésorerie_cumulée"] = solde_depart_total + df_tresorerie["Solde_mensuel"].cumsum()
-        st.session_state["df_tresorerie"] = df_tresorerie
-
-        fig = px.line(df_tresorerie, x="Mois", y="Trésorerie_cumulée", title="📈 Évolution prévisionnelle de la trésorerie", markers=True)
-        fig.update_layout(xaxis_title="Mois", yaxis_title="Trésorerie (€)")
-        st.plotly_chart(fig, use_container_width=True)
-        st.subheader("📋 Détail mensuel")
-        st.dataframe(df_tresorerie.style.format({"Débit":"{:,.0f}", "Crédit":"{:,.0f}", "Solde_mensuel":"{:,.0f}", "Trésorerie_cumulée":"{:,.0f}"}))
+    # ---- Vérification des comptes normalisés ----
+    st.write("✅ Vérification des comptes après normalisation :")
+    st.write(df[["Compte", "Compte_norm"]].drop_duplicates())
 
 # =====================
 # SYNTHESE GLOBALE
