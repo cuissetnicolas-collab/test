@@ -58,7 +58,7 @@ if page == "Accueil":
     - Suivre la trésorerie (**CASH EDITION**)  
     - Piloter les droits d’auteurs sur vos livres (**ROYALTIES EDITION**)  
     - Gérer les retours éditeurs/distributeurs (**RETURNS EDITION**)  
-    - Obtenir une synthèse globale des indicateurs (**SYNTHESE GLOBALE**)  
+    - Synthèse globale (**SYNTHESE GLOBALE**)  
     Utilisez le menu à gauche pour naviguer entre les modules.
     """)
     st.stop()
@@ -74,6 +74,17 @@ if page == "DATA EDITION":
             df = pd.read_excel(fichier_comptables, header=0)
             df.columns = df.columns.str.strip()
             st.write("Colonnes détectées :", list(df.columns))
+            # Paramétrage des colonnes
+            col_mapping = {}
+            st.subheader("Paramétrage des colonnes")
+            col_mapping["Compte"] = st.selectbox("Colonne compte", options=df.columns)
+            col_mapping["Débit"] = st.selectbox("Colonne débit", options=df.columns)
+            col_mapping["Crédit"] = st.selectbox("Colonne crédit", options=df.columns)
+            col_mapping["Famille_Analytique"] = st.selectbox("Colonne famille analytique", options=df.columns)
+            col_mapping["Code_Analytique"] = st.selectbox("Colonne code analytique (ISBN)", options=df.columns)
+            col_mapping["Date"] = st.selectbox("Colonne date", options=df.columns)
+            
+            df.rename(columns=col_mapping, inplace=True)
             st.session_state["df_comptables"] = df
             st.success(f"✅ Fichier chargé : {df.shape[0]} lignes")
             st.dataframe(df.head())
@@ -89,35 +100,19 @@ elif page == "SOCLE EDITION":
         st.warning("⚠️ Importer d'abord les données via DATA EDITION.")
     else:
         df = st.session_state["df_comptables"].copy()
-
-        # Paramétrage des colonnes
-        st.subheader("Paramétrage des colonnes")
-        compte_col = st.selectbox("Colonne Numéro de compte", df.columns)
-        debit_col = st.selectbox("Colonne Débit", df.columns)
-        credit_col = st.selectbox("Colonne Crédit", df.columns)
-        famille_col = st.selectbox("Colonne Familles de catégories (optionnel)", df.columns.insert(0,''))
-        code_col = st.selectbox("Colonne Catégories / Code analytique", df.columns.insert(0,''))
-        date_col = st.selectbox("Colonne Date", df.columns)
-
-        st.subheader("Paramétrage des comptes spécifiques")
-        ventes = st.text_input("Numéros de compte Ventes (séparés par ,)", "701100000")
-        retours = st.text_input("Numéros de compte Retours (séparés par ,)", "709000000")
-        remises = st.text_input("Numéros de compte Remises (séparés par ,)", "709100000")
+        st.subheader("Paramétrage des comptes clés")
+        ventes = st.text_input("Compte(s) ventes brutes (ex: 701000000,701100000)", "701100000")
+        retours = st.text_input("Compte(s) retours (ex: 709000000)", "709000000")
+        remises = st.text_input("Compte(s) remises libraires (ex: 709100000)", "709100000")
+        provisions = st.text_input("Compte(s) provision sur retours (ex: 681000000)", "681000000")
         st.session_state["param_comptes"] = {
             "ventes": [c.strip() for c in ventes.split(",")],
             "retours": [c.strip() for c in retours.split(",")],
-            "remises": [c.strip() for c in remises.split(",")]
+            "remises": [c.strip() for c in remises.split(",")],
+            "provisions": [c.strip() for c in provisions.split(",")]
         }
-
+        
         if st.button("Générer le SOCLE"):
-            df.rename(columns={
-                compte_col:"Compte",
-                debit_col:"Débit",
-                credit_col:"Crédit",
-                famille_col:"Famille_Analytique",
-                code_col:"Code_Analytique",
-                date_col:"Date"
-            }, inplace=True)
             for col in ["Famille_Analytique","Code_Analytique"]:
                 if col not in df.columns: df[col] = ""
                 else: df[col] = df[col].fillna("")
@@ -137,9 +132,10 @@ elif page == "VISION EDITION":
     else:
         df = st.session_state["df_pivot"].copy()
         df["Résultat"] = df["Crédit"] - df["Débit"]
+        st.subheader("Top 10 ISBN par résultat net")
         top_isbn = df.groupby("Code_Analytique", as_index=False)["Résultat"].sum().sort_values("Résultat", ascending=False).head(10)
         st.dataframe(top_isbn)
-        fig = px.bar(top_isbn, x="Code_Analytique", y="Résultat", title="Top 10 ISBN par résultat net", labels={"Code_Analytique":"ISBN","Résultat":"Résultat net"})
+        fig = px.bar(top_isbn, x="Code_Analytique", y="Résultat", labels={"Code_Analytique":"ISBN","Résultat":"Résultat net"})
         st.plotly_chart(fig, use_container_width=True)
 
 # =====================
@@ -170,68 +166,49 @@ elif page == "ROYALTIES EDITION":
     else:
         df = st.session_state["df_pivot"].copy()
         taux_fixe = st.number_input("Taux fixe de droits (%)", value=10.0)
-        st.info(f"Taux sélectionné : {taux_fixe}%")
-        ventes_compte = st.session_state["param_comptes"]["ventes"]
-        df_ventes = df[df["Compte"].astype(str).str.strip().isin(ventes_compte)]
-        ca_total = df_ventes["Crédit"].sum()
-        droits = ca_total * taux_fixe / 100
-        st.metric("CA total pour droits", f"{ca_total:,.0f} €")
-        st.metric("Droits d'auteurs calculés", f"{droits:,.0f} €")
+        # Ventes
+        ventes_comptes = st.session_state["param_comptes"]["ventes"]
+        df_ventes = df[df["Compte"].astype(str).str.strip().isin(ventes_comptes)]
+        df_droits = df_ventes.groupby("Code_Analytique", as_index=False)["Crédit"].sum()
+        df_droits["Droits"] = df_droits["Crédit"] * taux_fixe / 100
+        st.subheader("Droits par ISBN")
+        st.dataframe(df_droits.sort_values("Droits", ascending=False))
+        # Prévision droits
+        horizon = st.slider("Horizon prévision droits (mois)", 3, 24, 12)
+        croissance_droits = st.number_input("Croissance mensuelle (%)", 2.0)/100
+        previsions_droits = [df_droits["Droits"].sum() * (1 + croissance_droits)**i for i in range(1,horizon+1)]
+        df_prev_droits = pd.DataFrame({"Mois":[f"Mois {i}" for i in range(1,horizon+1)],
+                                       "Droits prévus": previsions_droits})
+        st.subheader("Prévision droits")
+        st.dataframe(df_prev_droits.style.format({"Droits prévus":"{:,.0f}"}))
 
 # =====================
 # RETURNS EDITION
 # =====================
 elif page == "RETURNS EDITION":
-    st.header("📦 RETURNS EDITION - Indicateurs retours et remises")
+    st.header("📦 RETURNS EDITION - Gestion des retours")
     if "df_pivot" not in st.session_state:
         st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
     else:
         df = st.session_state["df_pivot"].copy()
-        params = st.session_state["param_comptes"]
-        ventes = params["ventes"]
-        retours = params["retours"]
-        remises = params["remises"]
-
-        ca_brut = df[df["Compte"].astype(str).str.strip().isin(ventes)]["Crédit"].sum()
-        total_retours = df[df["Compte"].astype(str).str.strip().isin(retours)]["Crédit"].sum()
-        total_remises = df[df["Compte"].astype(str).str.strip().isin(remises)]["Crédit"].sum()
-        pct_retours = (total_retours / ca_brut * 100) if ca_brut > 0 else 0
-        pct_remises = (total_remises / ca_brut * 100) if ca_brut > 0 else 0
-
+        param = st.session_state["param_comptes"]
+        df["Compte"] = df["Compte"].astype(str).str.strip()
+        
+        ca_brut = df[df["Compte"].isin(param["ventes"])]["Crédit"].sum()
+        total_retours = df[df["Compte"].isin(param["retours"])]["Crédit"].sum()
+        total_remises = df[df["Compte"].isin(param["remises"])]["Crédit"].sum()
+        total_provisions = df[df["Compte"].isin(param["provisions"])]["Débit"].sum()
+        resultat_net = ca_brut - total_retours - total_remises - df["Débit"].sum()
+        
         st.metric("CA brut", f"{ca_brut:,.0f} €")
-        st.metric("Total retours", f"{total_retours:,.0f} € ({pct_retours:.1f}%)")
-        st.metric("Total remises", f"{total_remises:,.0f} € ({pct_remises:.1f}%)")
-
-        top_retours = df[df["Compte"].astype(str).str.strip().isin(retours)].groupby("Code_Analytique", as_index=False)["Crédit"].sum().sort_values("Crédit", ascending=False).head(10)
-        top_remises = df[df["Compte"].astype(str).str.strip().isin(remises)].groupby("Code_Analytique", as_index=False)["Crédit"].sum().sort_values("Crédit", ascending=False).head(10)
-
-        st.subheader("Top 10 ISBN par retours")
-        st.dataframe(top_retours)
-        fig_ret = px.bar(top_retours, x="Code_Analytique", y="Crédit", title="Top 10 ISBN par retours")
-        st.plotly_chart(fig_ret, use_container_width=True)
-
-        st.subheader("Top 10 ISBN par remises")
-        st.dataframe(top_remises)
-        fig_rem = px.bar(top_remises, x="Code_Analytique", y="Crédit", title="Top 10 ISBN par remises")
-        st.plotly_chart(fig_rem, use_container_width=True)
-
-        # Prévisions simples
-        st.subheader("Prévision retours et remises")
-        horizon = st.slider("Horizon prévision (mois)", 3, 24, 12)
-        croissance_retours = st.number_input("Croissance mensuelle des retours (%)", 2.0)/100
-        croissance_remises = st.number_input("Croissance mensuelle des remises (%)", 1.0)/100
-
-        prevision_retours = [total_retours * (1 + croissance_retours)**i for i in range(1, horizon+1)]
-        prevision_remises = [total_remises * (1 + croissance_remises)**i for i in range(1, horizon+1)]
-        df_prev = pd.DataFrame({
-            "Mois": [f"Mois {i}" for i in range(1, horizon+1)],
-            "Retours prévus": prevision_retours,
-            "Remises prévues": prevision_remises
-        })
-        st.dataframe(df_prev.style.format({"Retours prévus":"{:,.0f}","Remises prévues":"{:,.0f}"}))
-
-        fig_prev = px.line(df_prev, x="Mois", y=["Retours prévus","Remises prévues"], title="Prévisions retours et remises")
-        st.plotly_chart(fig_prev, use_container_width=True)
+        st.metric("Total retours", f"{total_retours:,.0f} €")
+        st.metric("Total remises", f"{total_remises:,.0f} €")
+        st.metric("Provision sur retours", f"{total_provisions:,.0f} €")
+        st.metric("Résultat net", f"{resultat_net:,.0f} €")
+        
+        st.subheader("Top ISBN par retours")
+        top_isbn_retours = df[df["Compte"].isin(param["retours"])].groupby("Code_Analytique", as_index=False)["Crédit"].sum()
+        st.dataframe(top_isbn_retours.sort_values("Crédit", ascending=False))
 
 # =====================
 # CASH EDITION
@@ -242,93 +219,75 @@ elif page == "CASH EDITION":
         st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
     else:
         df_pivot = st.session_state["df_pivot"].copy()
+        # Date de départ
         date_debut = st.date_input("Date de départ de la trésorerie", pd.to_datetime("2025-04-01"))
+        # Nettoyage et conversion
         df_pivot["Compte"] = df_pivot["Compte"].astype(str).str.strip()
         df_pivot["Date"] = pd.to_datetime(df_pivot["Date"], errors="coerce")
         df_pivot["Débit"] = pd.to_numeric(df_pivot["Débit"], errors="coerce").fillna(0)
         df_pivot["Crédit"] = pd.to_numeric(df_pivot["Crédit"], errors="coerce").fillna(0)
-
+        # Solde départ
         comptes_bancaires = df_pivot[df_pivot["Compte"].str.startswith("5")]
-        solde_depart_df = comptes_bancaires[comptes_bancaires["Date"] <= pd.to_datetime(date_debut)]
-        solde_depart_total = solde_depart_df["Crédit"].sum() - solde_depart_df["Débit"].sum()
-        st.info(f"Solde de départ : {solde_depart_total:,.2f} €")
-
-        horizon = st.slider("Horizon de projection (en mois)", 3, 24, 12)
-        croissance_ca = st.number_input("Croissance mensuelle du CA (%)", value=2.0) / 100
-        evolution_charges = st.number_input("Évolution mensuelle des charges (%)", value=1.0) / 100
-
+        solde_depart_total = (comptes_bancaires[comptes_bancaires["Date"]<=pd.to_datetime(date_debut)]["Crédit"].sum()
+                             - comptes_bancaires[comptes_bancaires["Date"]<=pd.to_datetime(date_debut)]["Débit"].sum())
+        st.info(f"Solde de départ : {solde_depart_total:,.0f} €")
+        # Paramètres projection
+        horizon = st.slider("Horizon de projection (mois)",3,24,12)
+        croissance_ca = st.number_input("Croissance mensuelle CA (%)",2.0)/100
+        evolution_charges = st.number_input("Evolution mensuelle charges (%)",1.0)/100
+        # Flux hors banques
         df_flux = df_pivot[~df_pivot["Compte"].str.startswith("5")].copy()
         df_flux = df_flux.dropna(subset=["Date"])
-        df_flux = df_flux[df_flux["Date"] >= pd.to_datetime(date_debut)]
+        df_flux = df_flux[df_flux["Date"]>=pd.to_datetime(date_debut)]
         df_flux["Mois"] = df_flux["Date"].dt.to_period("M").astype(str)
-
-        flux_mensuel = df_flux.groupby("Mois").agg({"Débit": "sum", "Crédit": "sum"}).reset_index()
+        flux_mensuel = df_flux.groupby("Mois").agg({"Débit":"sum","Crédit":"sum"}).reset_index()
         flux_mensuel["Solde_mensuel"] = flux_mensuel["Crédit"] - flux_mensuel["Débit"]
         flux_mensuel = flux_mensuel.sort_values("Mois")
-
-        dernier_mois = pd.Period(flux_mensuel["Mois"].max(), freq="M") if not flux_mensuel.empty else pd.Period(date_debut, freq="M")
-        previsions = []
+        # Prévision future
+        dernier_mois = pd.Period(flux_mensuel["Mois"].max(),freq="M") if not flux_mensuel.empty else pd.Period(date_debut,freq="M")
+        previsions=[]
         ca_actuel = flux_mensuel["Crédit"].iloc[-1] if not flux_mensuel.empty else 0
         charges_actuelles = flux_mensuel["Débit"].iloc[-1] if not flux_mensuel.empty else 0
-
-        for i in range(1, horizon + 1):
-            prochain_mois = (dernier_mois + i).strftime("%Y-%m")
-            ca_actuel *= (1 + croissance_ca)
-            charges_actuelles *= (1 + evolution_charges)
-            solde_prevu = ca_actuel - charges_actuelles
-            previsions.append({
-                "Mois": prochain_mois,
-                "Débit": charges_actuelles,
-                "Crédit": ca_actuel,
-                "Solde_mensuel": solde_prevu
-            })
-
+        for i in range(1,horizon+1):
+            prochain_mois=(dernier_mois+i).strftime("%Y-%m")
+            ca_actuel*=(1+croissance_ca)
+            charges_actuelles*=(1+evolution_charges)
+            solde_prevu=ca_actuel-charges_actuelles
+            previsions.append({"Mois":prochain_mois,"Débit":charges_actuelles,"Crédit":ca_actuel,"Solde_mensuel":solde_prevu})
         df_prev = pd.DataFrame(previsions)
-        df_tresorerie = pd.concat([flux_mensuel, df_prev], ignore_index=True)
+        df_tresorerie=pd.concat([flux_mensuel,df_prev],ignore_index=True)
         df_tresorerie["Trésorerie_cumulée"] = solde_depart_total + df_tresorerie["Solde_mensuel"].cumsum()
-
-        fig = px.line(df_tresorerie, x="Mois", y="Trésorerie_cumulée", title="📈 Évolution prévisionnelle de la trésorerie", markers=True)
+        # Graphique
+        fig = px.line(df_tresorerie, x="Mois", y="Trésorerie_cumulée", title="📈 Evolution prévisionnelle de la trésorerie", markers=True)
         fig.update_layout(xaxis_title="Mois", yaxis_title="Trésorerie (€)")
-        st.plotly_chart(fig, use_container_width=True)
-
+        st.plotly_chart(fig,use_container_width=True)
         st.subheader("📋 Détail mensuel")
-        st.dataframe(df_tresorerie.style.format({
-            "Débit": "{:,.0f}",
-            "Crédit": "{:,.0f}",
-            "Solde_mensuel": "{:,.0f}",
-            "Trésorerie_cumulée": "{:,.0f}"
-        }))
+        st.dataframe(df_tresorerie.style.format({"Débit":"{:,.0f}","Crédit":"{:,.0f}","Solde_mensuel":"{:,.0f}","Trésorerie_cumulée":"{:,.0f}"}))
 
 # =====================
 # SYNTHESE GLOBALE
 # =====================
-elif page == "SYNTHESE GLOBALE":
+elif page=="SYNTHESE GLOBALE":
     st.header("📊 SYNTHESE GLOBALE")
     if "df_pivot" not in st.session_state:
         st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
     else:
         df = st.session_state["df_pivot"].copy()
-        params = st.session_state["param_comptes"]
-        ventes = params["ventes"]
-        retours = params["retours"]
-        remises = params["remises"]
-
-        ca_brut = df[df["Compte"].astype(str).str.strip().isin(ventes)]["Crédit"].sum()
-        total_retours = df[df["Compte"].astype(str).str.strip().isin(retours)]["Crédit"].sum()
-        total_remises = df[df["Compte"].astype(str).str.strip().isin(remises)]["Crédit"].sum()
+        param = st.session_state["param_comptes"]
+        ca_brut = df[df["Compte"].isin(param["ventes"])]["Crédit"].sum()
+        total_retours = df[df["Compte"].isin(param["retours"])]["Crédit"].sum()
+        total_remises = df[df["Compte"].isin(param["remises"])]["Crédit"].sum()
+        total_provisions = df[df["Compte"].isin(param["provisions"])]["Débit"].sum()
         resultat_net = ca_brut - total_retours - total_remises - df["Débit"].sum()
-
         st.metric("CA brut", f"{ca_brut:,.0f} €")
         st.metric("Total retours", f"{total_retours:,.0f} €")
         st.metric("Total remises", f"{total_remises:,.0f} €")
+        st.metric("Provision sur retours", f"{total_provisions:,.0f} €")
         st.metric("Résultat net", f"{resultat_net:,.0f} €")
-
-        top_isbn = df.groupby("Code_Analytique", as_index=False).agg({"Crédit":"sum","Débit":"sum"})
-        top_isbn["Résultat"] = top_isbn["Crédit"] - top_isbn["Débit"]
-        st.subheader("Top ISBN par résultat")
-        st.dataframe(top_isbn.sort_values("Résultat", ascending=False).head(10))
-        fig = px.bar(top_isbn.sort_values("Résultat", ascending=False).head(10), x="Code_Analytique", y="Résultat", title="Top ISBN par résultat")
-        st.plotly_chart(fig, use_container_width=True)
+        st.subheader("Top 10 ISBN par résultat")
+        top_isbn = df.groupby("Code_Analytique",as_index=False).agg({"Crédit":"sum","Débit":"sum"})
+        top_isbn["Résultat"]=top_isbn["Crédit"]-top_isbn["Débit"]
+        st.dataframe(top_isbn.sort_values("Résultat",ascending=False).head(10))
 
 # =====================
 # COPYRIGHT
