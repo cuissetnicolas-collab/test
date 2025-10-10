@@ -226,67 +226,28 @@ elif page == "RETURNS EDITION":
 
     df = st.session_state["df_pivot"].copy()
 
-    # ---- Nettoyage et conversion universelle ----
-    def format_compte(x):
-        if pd.isna(x):
-            return ""
-        try:
-            return str(int(x))  # Convertit float/int en string
-        except:
-            return str(x).strip()  # Nettoie string
+    # ---- Conversion des comptes en string ----
+    df["Compte_str"] = df["Compte"].apply(lambda x: str(int(x)) if pd.notna(x) else "")
 
-    df["Compte"] = df["Compte"].apply(format_compte)
+    # Comptes exacts
+    compte_retours = "709000000"
+    compte_remises = "709100000"
 
-    st.subheader("⚙️ Paramétrage des comptes comptables")
-    compte_ventes = st.text_input("Numéro de compte des ventes brutes :", value="701")
-    compte_retours = st.text_input("Numéro de compte des retours :", value="709000000")
-    compte_remises = st.text_input("Numéro de compte des remises libraires :", value="709100000")
+    # Filtrage exact
+    retours = df[df["Compte_str"] == compte_retours]
+    remises = df[df["Compte_str"] == compte_remises]
 
-    filtre_type = st.radio("Type de filtrage", ["Par racine", "Compte exact"], index=1)
+    # Calcul solde global (Crédit - Débit)
+    total_retours = retours["Crédit"].sum() - retours["Débit"].sum()
+    total_remises = remises["Crédit"].sum() - remises["Débit"].sum()
 
-    if st.button("🔍 Lancer l'analyse des retours"):
+    st.markdown("### 📊 Résultat")
+    col1, col2 = st.columns(2)
+    col1.metric("Retours (709000000)", f"{total_retours:,.0f} €")
+    col2.metric("Remises (709100000)", f"{total_remises:,.0f} €")
 
-        # ---- Filtrage ventes ----
-        ventes = df[df["Compte"].str.startswith(compte_ventes)] if filtre_type == "Par racine" else df[df["Compte"] == compte_ventes]
-
-        # ---- Filtrage retours ----
-        if filtre_type == "Par racine":
-            retours = df[df["Compte"].str.startswith(compte_retours)]
-            remises = df[df["Compte"].str.startswith(compte_remises)]
-        else:
-            # Si exact, on cherche tous les comptes commençant par le code fourni,
-            # ce qui corrige les problèmes float/int
-            retours = df[df["Compte"].str.match(f"^{compte_retours}")]
-            remises = df[df["Compte"].str.match(f"^{compte_remises}")]
-
-        # ---- Calculs solde global ----
-        ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
-        total_retours = retours["Crédit"].sum() - retours["Débit"].sum()
-        total_remises = remises["Crédit"].sum() - remises["Débit"].sum()
-        ca_net = ca_brut - total_retours - total_remises
-
-        # ---- Affichage résumé global ----
-        st.markdown("### 📊 Résumé global")
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("CA brut", f"{ca_brut:,.0f} €")
-        col2.metric("Retours", f"{total_retours:,.0f} €")
-        col3.metric("Remises", f"{total_remises:,.0f} €")
-        col4.metric("CA net", f"{ca_net:,.0f} €")
-
-        # ---- Analyse par ISBN ----
-        st.markdown("### 🔎 Analyse par ISBN")
-        ventes_isbn = ventes.groupby("Code_Analytique", as_index=False).agg({"Crédit": "sum"}).rename(columns={"Crédit": "Ventes"})
-        retours_isbn = retours.groupby("Code_Analytique", as_index=False).agg({"Crédit": "sum"}).rename(columns={"Crédit": "Retours"})
-
-        df_merge = pd.merge(ventes_isbn, retours_isbn, on="Code_Analytique", how="outer").fillna(0)
-        df_merge["Taux_retour_%"] = np.where(df_merge["Ventes"] != 0, (df_merge["Retours"] / df_merge["Ventes"]) * 100, 0)
-
-        st.dataframe(df_merge.sort_values("Taux_retour_%", ascending=False))
-
-        # ---- Graphique ----
-        fig = px.bar(df_merge, x="Code_Analytique", y="Taux_retour_%",
-                     title="Taux de retour par ISBN", labels={"Code_Analytique": "ISBN", "Taux_retour_%": "% Retours"})
-        st.plotly_chart(fig, use_container_width=True)
+    st.write("⚠️ Si les valeurs restent à 0, vérifier le contenu exact de la colonne 'Compte' :")
+    st.write(df[["Compte", "Compte_str"]].drop_duplicates())
 # =====================
 # CASH EDITION
 # =====================
