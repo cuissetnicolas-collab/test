@@ -218,28 +218,59 @@ elif page == "ROYALTIES EDITION":
 # RETURNS EDITION
 # =====================
 elif page == "RETURNS EDITION":
-    st.header("📦 RETURNS EDITION - Gestion des retours")
+    st.header("📦 RETURNS EDITION - Analyse des retours et remises libraires")
+
+    st.info("""
+    💡 **Note importante**
+    Les indicateurs s’appuient sur les **numéros de comptes** présents dans votre fichier comptable.
+    Chaque cabinet doit s’assurer que les comptes suivants sont clairement identifiés :
+    - Compte de **ventes brutes** (ex : 701...)
+    - Compte de **remises libraires** (ex : 7091...)
+    - Compte de **retours de livres** (ex : 709...)
+    """)
+
     if "df_pivot" not in st.session_state:
-        st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
-    else:
-        param = st.session_state.get("param_comptes", {})
-        st.info("⚠️ Assurez-vous que vos libellés ou comptes retours, ventes et remises sont bien paramétrés.")
-        comptes_ventes = param.get("ventes", [])
-        comptes_retours = param.get("retours", [])
-        comptes_remises = param.get("remises", [])
-        
-        # Filtrer SOCLE pour retours
-        df = st.session_state["df_pivot"].copy()
-        df_ret = df[df["Compte"].astype(str).str[:len(comptes_retours[0])].isin(comptes_retours)] if comptes_retours else pd.DataFrame()
-        df_ventes = df[df["Compte"].astype(str).str[:len(comptes_ventes[0])].isin(comptes_ventes)] if comptes_ventes else pd.DataFrame()
-        df_remises = df[df["Compte"].astype(str).str[:len(comptes_remises[0])].isin(comptes_remises)] if comptes_remises else pd.DataFrame()
-        
-        if not df_ret.empty:
-            st.subheader("📊 Retours par ISBN")
-            ret_isbn = df_ret.groupby("Code_Analytique", as_index=False).agg({"Débit":"sum"})
-            st.dataframe(ret_isbn)
-        else:
-            st.info("Aucun retour détecté selon vos comptes paramétrés.")
+        st.warning("⚠️ Vous devez d'abord générer le SOCLE EDITION.")
+        st.stop()
+
+    df = st.session_state["df_pivot"].copy()
+
+    st.subheader("⚙️ Paramétrage des comptes comptables")
+    compte_ventes = st.text_input("Numéro de compte des ventes brutes :", value="701")
+    compte_retours = st.text_input("Numéro de compte des retours :", value="709")
+    compte_remises = st.text_input("Numéro de compte des remises libraires :", value="7091")
+
+    if st.button("🔍 Lancer l'analyse des retours"):
+        df["Résultat"] = df["Crédit"] - df["Débit"]
+
+        ventes = df[df["Compte"].astype(str).str.startswith(compte_ventes)]
+        retours = df[df["Compte"].astype(str).str.startswith(compte_retours)]
+        remises = df[df["Compte"].astype(str).str.startswith(compte_remises)]
+
+        ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
+        total_retours = retours["Débit"].sum() - retours["Crédit"].sum()
+        total_remises = remises["Débit"].sum() - remises["Crédit"].sum()
+        ca_net = ca_brut - total_retours - total_remises
+
+        st.markdown("### 📊 Résumé global")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("CA brut", f"{ca_brut:,.0f} €")
+        col2.metric("Retours", f"{total_retours:,.0f} €")
+        col3.metric("Remises", f"{total_remises:,.0f} €")
+        col4.metric("CA net", f"{ca_net:,.0f} €")
+
+        st.markdown("### 🔎 Analyse par ISBN")
+        ventes_isbn = ventes.groupby("Code_Analytique", as_index=False)["Crédit"].sum().rename(columns={"Crédit": "Ventes"})
+        retours_isbn = retours.groupby("Code_Analytique", as_index=False)["Débit"].sum().rename(columns={"Débit": "Retours"})
+
+        df_merge = pd.merge(ventes_isbn, retours_isbn, on="Code_Analytique", how="outer").fillna(0)
+        df_merge["Taux_retour_%"] = np.where(df_merge["Ventes"] != 0, (df_merge["Retours"] / df_merge["Ventes"]) * 100, 0)
+
+        st.dataframe(df_merge.sort_values("Taux_retour_%", ascending=False))
+
+        fig = px.bar(df_merge, x="Code_Analytique", y="Taux_retour_%",
+                     title="Taux de retour par ISBN", labels={"Code_Analytique": "ISBN", "Taux_retour_%": "% Retours"})
+        st.plotly_chart(fig, use_container_width=True)
 # =====================
 # CASH EDITION
 # =====================
