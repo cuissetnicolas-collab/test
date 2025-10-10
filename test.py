@@ -226,29 +226,27 @@ elif page == "RETURNS EDITION":
 
     df = st.session_state["df_pivot"].copy()
 
-    # ---- Normalisation universelle des comptes ----
-    def normalize_compte(x):
+    # ---- Normalisation sécurisée uniquement pour retours et remises ----
+    def normalize_for_returns(x):
         if pd.isna(x):
             return ""
         try:
-            # Convert float/int en entier puis format 9 chiffres
-            return str(int(float(x))).zfill(9)
+            return str(int(float(x)))  # Convertit float/int en string propre
         except:
-            # Si string, nettoyage et completion à 9 chiffres
-            return str(x).strip().zfill(9)
+            return str(x).strip()
 
-    df["Compte_norm"] = df["Compte"].apply(normalize_compte)
+    df["Compte_norm"] = df["Compte"].apply(normalize_for_returns)
 
     # ---- Comptes exacts ----
     compte_retours = "709000000"
     compte_remises = "709100000"
 
-    # ---- Filtrage exact après normalisation ----
+    # ---- Filtrage exact ----
     retours = df[df["Compte_norm"] == compte_retours]
     remises = df[df["Compte_norm"] == compte_remises]
 
-    # ---- Ventes : comptes commençant par '701' ----
-    ventes = df[df["Compte_norm"].str.startswith("701")]
+    # ---- Ventes : comptes commençant par '701' (CA brut) ----
+    ventes = df[df["Compte"].astype(str).str.startswith("701")]
 
     # ---- Calculs ----
     ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
