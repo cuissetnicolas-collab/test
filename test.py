@@ -226,36 +226,33 @@ elif page == "RETURNS EDITION":
 
     df = st.session_state["df_pivot"].copy()
 
-    # ---- Normalisation universelle des comptes ----
-    def normalize_compte(x):
-        """
-        Transforme tous les comptes pour qu'ils aient 9 chiffres.
-        - Si float/int → convertit en entier et zfill(9)
-        - Si string → nettoie et zfill(9)
-        """
-        if pd.isna(x):
-            return ""
-        try:
-            return str(int(float(x))).zfill(9)
-        except:
-            return str(x).strip().zfill(9)
-
-    df["Compte_norm"] = df["Compte"].apply(normalize_compte)
-
     # ---- Comptes exacts ----
-    compte_ventes = "701000000"        # Ajuster selon ton fichier
     compte_retours = "709000000"
     compte_remises = "709100000"
 
+    # ---- Normalisation sécurisée uniquement pour retours/remises ----
+    def normalize_for_returns(x):
+        if pd.isna(x):
+            return ""
+        try:
+            return str(int(float(x)))  # convert float/int → string
+        except:
+            return str(x).strip()
+
+    df["Compte_norm"] = df["Compte"].apply(normalize_for_returns)
+
     # ---- Filtrage exact ----
-    ventes = df[df["Compte_norm"].str.startswith(compte_ventes[:3])]
     retours = df[df["Compte_norm"] == compte_retours]
     remises = df[df["Compte_norm"] == compte_remises]
 
     # ---- Calculs ----
-    ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
     total_retours = retours["Crédit"].sum() - retours["Débit"].sum()
     total_remises = remises["Crédit"].sum() - remises["Débit"].sum()
+
+    # ---- CA brut et net ----
+    # Le CA brut reste basé sur les comptes originaux (non normalisés)
+    ventes = df[df["Compte"].astype(str).str.startswith("701")]
+    ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
     ca_net = ca_brut - total_retours - total_remises
 
     # ---- Affichage résumé global ----
@@ -282,7 +279,7 @@ elif page == "RETURNS EDITION":
     st.plotly_chart(fig, use_container_width=True)
 
     # ---- Vérification des comptes normalisés ----
-    st.write("✅ Vérification des comptes après normalisation :")
+    st.write("✅ Vérification des comptes normalisés pour retours/remises :")
     st.write(df[["Compte", "Compte_norm"]].drop_duplicates())
 
 # =====================
