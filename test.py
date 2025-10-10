@@ -190,84 +190,94 @@ elif page == "ROYALTIES EDITION":
 # RETURNS EDITION
 # =====================
 elif page == "RETURNS EDITION":
-    st.header("📦 RETURNS EDITION - Gestion des retours")
-    
+    st.header("📦 RETURNS EDITION - Analyse des retours et remises libraires")
+
+    st.info("""
+    💡 **Note importante**  
+    Les indicateurs s’appuient sur les **numéros de comptes** ou **libellés** présents dans votre SOCLE.  
+    Veillez à paramétrer les comptes correctement (ventes / remises / retours) pour garantir la fiabilité.
+    """)
+
     if "df_pivot" not in st.session_state:
-        st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
+        st.warning("⚠️ Vous devez d'abord générer le SOCLE EDITION.")
     else:
         df = st.session_state["df_pivot"].copy()
-        df["Libelle"] = df.get("Libelle", df["Compte"])
-        
-        # --- Normalisation des comptes ---
-        def normalize_compte(x):
-            try:
-                return str(int(float(x))).strip()
-            except:
-                return str(x).strip()
-        
-        df["Compte"] = df["Compte"].apply(normalize_compte)
-        
-        st.subheader("📋 Comptes disponibles dans les données")
-        st.write(sorted(df["Compte"].unique()))
-        
-        # --- Définir les plages de comptes ---
-        # Adapter ces plages selon ton plan comptable
-        ventes_range = range(0, 101)      # comptes ventes : [0 - 100]
-        remises_range = range(100, 200)   # comptes remises : [100 - 199]
-        retours_range = range(200, 220)   # comptes retours : [200 - 219]
-        
-        # --- Masques pour filtrer les comptes ---
-        mask_ventes = df["Compte"].isin([str(i) for i in ventes_range])
-        mask_remises = df["Compte"].isin([str(i) for i in remises_range])
-        mask_retours = df["Compte"].isin([str(i) for i in retours_range])
-        
-        # --- Préparer les colonnes Débit/Crédit ---
-        df["Débit"] = df["Débit"].fillna(0)
-        df["Crédit"] = df["Crédit"].fillna(0)
-        
-        # --- Calcul des soldes ---
-        df["Solde_ventes"] = df["Débit"] - df["Crédit"]
-        df["Solde_retours"] = df["Débit"] - df["Crédit"]
-        df["Solde_remises"] = df["Crédit"] - df["Débit"]
-        
-        # --- Sommes ---
-        ca_brut = df.loc[mask_ventes, "Solde_ventes"].sum()
-        total_retours = df.loc[mask_retours, "Solde_retours"].sum()
-        remises = df.loc[mask_remises, "Solde_remises"].sum()
-        
-        # --- Affichage des indicateurs ---
-        st.metric("💰 CA Brut", f"{ca_brut:,.0f} €")
-        st.metric("📦 Retours", f"{total_retours:,.0f} €")
-        st.metric("🏷️ Remises libraires", f"{remises:,.0f} €")
-        
-        # --- Vérification top retours par ISBN ---
-        if mask_retours.any():
-            df_retours_isbn = df.loc[mask_retours].copy()
-            df_retours_isbn["Solde_retours"] = df_retours_isbn["Solde_retours"]
-            top_retours = (
-                df_retours_isbn.groupby("Code_Analytique", as_index=False)
-                .agg({"Solde_retours": "sum"})
-                .sort_values("Solde_retours", ascending=False)
-            )
-            st.subheader("Top retours par ISBN")
-            st.dataframe(top_retours)
-        else:
-            st.info(f"Aucun retour détecté pour les comptes dans la plage {retours_range.start} - {retours_range.stop-1}.")
-        
-        # --- Vérification top remises par ISBN ---
-        if mask_remises.any():
-            df_remises_isbn = df.loc[mask_remises].copy()
-            df_remises_isbn["Solde_remises"] = df_remises_isbn["Solde_remises"]
-            top_remises = (
-                df_remises_isbn.groupby("Code_Analytique", as_index=False)
-                .agg({"Solde_remises": "sum"})
-                .sort_values("Solde_remises", ascending=False)
-            )
-            st.subheader("Top remises par ISBN")
-            st.dataframe(top_remises)
-        else:
-            st.info(f"Aucune remise détectée pour les comptes dans la plage {remises_range.start} - {remises_range.stop-1}.")
+        st.subheader("⚙️ Paramétrage des comptes comptables")
+        mode = st.radio("Méthode d’identification :", ["Par libellé", "Par numéro de compte"])
 
+        if mode == "Par libellé":
+            col_libelle = st.selectbox("Colonne contenant le libellé :", df.columns, index=list(df.columns).index("Libellé") if "Libellé" in df.columns else 0)
+            mots_ventes = st.text_input("🔸 Mots-clés pour les ventes (séparés par des virgules)", "vente, bldd")
+            mots_retours = st.text_input("🔹 Mots-clés pour les retours (séparés par des virgules)", "retour")
+            mots_remises = st.text_input("🟠 Mots-clés pour les remises libraires (séparés par des virgules)", "remise, ristourne")
+            mots_ventes = [m.strip().lower() for m in mots_ventes.split(",")]
+            mots_retours = [m.strip().lower() for m in mots_retours.split(",")]
+            mots_remises = [m.strip().lower() for m in mots_remises.split(",")]
+
+            def classer(texte):
+                if pd.isna(texte): return "Autres"
+                t = str(texte).lower()
+                if any(m in t for m in mots_retours): return "Retours"
+                if any(m in t for m in mots_remises): return "Remises"
+                if any(m in t for m in mots_ventes): return "Ventes"
+                return "Autres"
+
+            df["Type_Ligne"] = df[col_libelle].apply(classer)
+
+        else:
+            comptes_uniques = sorted(df["Compte"].astype(str).unique())
+            comptes_ventes = st.multiselect("🔸 Comptes de ventes", comptes_uniques, default=[c for c in comptes_uniques if str(c).startswith("701")][:3])
+            comptes_retours = st.multiselect("🔹 Comptes de retours", comptes_uniques, default=[c for c in comptes_uniques if str(c).startswith("709")][:3])
+            comptes_remises = st.multiselect("🟠 Comptes de remises libraires", comptes_uniques, default=[c for c in comptes_uniques if str(c).startswith("7091")][:3])
+
+            def classer_compte(compte):
+                if str(compte) in comptes_retours: return "Retours"
+                if str(compte) in comptes_remises: return "Remises"
+                if str(compte) in comptes_ventes: return "Ventes"
+                return "Autres"
+
+            df["Type_Ligne"] = df["Compte"].apply(classer_compte)
+
+        # Agrégation
+        ventes = df[df["Type_Ligne"] == "Ventes"].groupby("Code_Analytique", as_index=False)["Crédit"].sum().rename(columns={"Crédit":"Ventes_brutes"})
+        retours = df[df["Type_Ligne"] == "Retours"].groupby("Code_Analytique", as_index=False)["Débit"].sum().rename(columns={"Débit":"Retours"})
+        remises = df[df["Type_Ligne"] == "Remises"].groupby("Code_Analytique", as_index=False)["Débit"].sum().rename(columns={"Débit":"Remises_libraires"})
+
+        df_result = ventes.merge(retours, on="Code_Analytique", how="outer")
+        df_result = df_result.merge(remises, on="Code_Analytique", how="outer").fillna(0)
+
+        df_result["CA_net_commercial"] = df_result["Ventes_brutes"] - df_result["Remises_libraires"]
+        df_result["CA_net_retour"] = df_result["CA_net_commercial"] - df_result["Retours"]
+        df_result["Taux_remise_%"] = np.where(df_result["Ventes_brutes"] > 0, df_result["Remises_libraires"] / df_result["Ventes_brutes"] * 100, 0)
+        df_result["Taux_retour_%"] = np.where(df_result["Ventes_brutes"] > 0, df_result["Retours"] / df_result["Ventes_brutes"] * 100, 0)
+
+        st.subheader("📊 Synthèse par ISBN")
+        st.dataframe(df_result.sort_values("CA_net_retour", ascending=False).head(200))
+
+        st.subheader("📉 Top taux de retour")
+        fig1 = px.bar(df_result.sort_values("Taux_retour_%", ascending=False).head(15),
+                      x="Code_Analytique", y="Taux_retour_%", title="Top 15 des ouvrages avec le plus fort taux de retour",
+                      labels={"Code_Analytique": "ISBN", "Taux_retour_%": "Taux de retour (%)"})
+        st.plotly_chart(fig1, use_container_width=True)
+
+        # Projection simple (taux moyen derniers 6 mois)
+        st.subheader("🔮 Projection simple (taux moyen)")
+        df["Mois"] = pd.to_datetime(df["Date"], errors="coerce").dt.to_period("M").astype(str)
+        df_temps_ventes = df[df["Type_Ligne"]=="Ventes"].groupby("Mois", as_index=False)["Crédit"].sum()
+        df_temps_retours = df[df["Type_Ligne"]=="Retours"].groupby("Mois", as_index=False)["Débit"].sum()
+        df_temps = pd.merge(df_temps_ventes, df_temps_retours, on="Mois", how="outer").fillna(0)
+        df_temps["Taux_retour_%"] = np.where(df_temps["Crédit"]>0, df_temps["Débit"]/df_temps["Crédit"]*100, 0)
+        taux_moyen = round(df_temps["Taux_retour_%"].tail(6).mean(),2) if not df_temps.empty else 0
+        st.info(f"Taux moyen de retour observé sur les 6 derniers mois : {taux_moyen}%")
+
+        # Export
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            df_result.to_excel(writer, index=False, sheet_name="Analyse_Retours_Remises")
+            if not df_temps.empty:
+                df_temps.to_excel(writer, index=False, sheet_name="Historique_Taux_Retour")
+        buffer.seek(0)
+        st.download_button("📥 Télécharger le rapport retours/remises", buffer, file_name="Analyse_Retours_Remises.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # =====================
 # CASH EDITION
