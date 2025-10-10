@@ -220,12 +220,15 @@ elif page == "RETURNS EDITION":
         df["Débit"] = df["Débit"].fillna(0)
         df["Crédit"] = df["Crédit"].fillna(0)
         
-        # --- Calcul du solde (Débit - Crédit) ---
-        df["Solde"] = df["Débit"] - df["Crédit"]
+        # --- Calcul des soldes ---
+        df["Solde_ventes"] = df["Débit"] - df["Crédit"]         # positif si vente
+        df["Solde_retours"] = df["Débit"] - df["Crédit"]        # positif si retour
+        df["Solde_remises"] = df["Crédit"] - df["Débit"]       # positif si remise
         
-        ca_brut = df.loc[mask_ventes, "Solde"].sum()
-        total_retours = df.loc[mask_retours, "Solde"].sum()
-        remises = df.loc[mask_remises, "Solde"].sum()
+        # --- Sommes ---
+        ca_brut = df.loc[mask_ventes, "Solde_ventes"].sum()
+        total_retours = df.loc[mask_retours, "Solde_retours"].sum()
+        remises = df.loc[mask_remises, "Solde_remises"].sum()
         
         # --- Affichage des indicateurs ---
         st.metric("💰 CA Brut", f"{ca_brut:,.0f} €")
@@ -235,7 +238,7 @@ elif page == "RETURNS EDITION":
         # --- Top retours par ISBN ---
         if mask_retours.any():
             df_retours_isbn = df.loc[mask_retours].copy()
-            df_retours_isbn["Solde_retours"] = df_retours_isbn["Solde"]
+            df_retours_isbn["Solde_retours"] = df_retours_isbn["Solde_retours"]
             top_retours = (
                 df_retours_isbn.groupby("Code_Analytique", as_index=False)
                 .agg({"Solde_retours": "sum"})
@@ -245,6 +248,20 @@ elif page == "RETURNS EDITION":
             st.dataframe(top_retours)
         else:
             st.info("Aucun retour détecté pour les comptes commençant par 709000.")
+        
+        # --- Vérification remises (optionnel) ---
+        if mask_remises.any():
+            df_remises_isbn = df.loc[mask_remises].copy()
+            df_remises_isbn["Solde_remises"] = df_remises_isbn["Solde_remises"]
+            top_remises = (
+                df_remises_isbn.groupby("Code_Analytique", as_index=False)
+                .agg({"Solde_remises": "sum"})
+                .sort_values("Solde_remises", ascending=False)
+            )
+            st.subheader("Top remises par ISBN")
+            st.dataframe(top_remises)
+        else:
+            st.info("Aucune remise détectée pour les comptes commençant par 709100.")
 
 
 # =====================
