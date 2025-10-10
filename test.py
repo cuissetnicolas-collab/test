@@ -226,15 +226,14 @@ elif page == "RETURNS EDITION":
 
     df = st.session_state["df_pivot"].copy()
 
-    # ---- Nettoyage des comptes ----
+    # ---- Nettoyage et conversion universelle ----
     def format_compte(x):
         if pd.isna(x):
             return ""
         try:
-            # Si c'est un float (ex: 7.09E+08), on le convertit en int puis str
-            return str(int(x))
+            return str(int(x))  # Convertit float/int en string
         except:
-            return str(x).strip()
+            return str(x).strip()  # Nettoie string
 
     df["Compte"] = df["Compte"].apply(format_compte)
 
@@ -246,17 +245,21 @@ elif page == "RETURNS EDITION":
     filtre_type = st.radio("Type de filtrage", ["Par racine", "Compte exact"], index=1)
 
     if st.button("🔍 Lancer l'analyse des retours"):
-        # ---- Filtrage ----
+
+        # ---- Filtrage ventes ----
+        ventes = df[df["Compte"].str.startswith(compte_ventes)] if filtre_type == "Par racine" else df[df["Compte"] == compte_ventes]
+
+        # ---- Filtrage retours ----
         if filtre_type == "Par racine":
-            ventes = df[df["Compte"].str.startswith(compte_ventes)]
             retours = df[df["Compte"].str.startswith(compte_retours)]
             remises = df[df["Compte"].str.startswith(compte_remises)]
-        else:  # Filtrage exact
-            ventes = df[df["Compte"] == compte_ventes]
-            retours = df[df["Compte"] == compte_retours]
-            remises = df[df["Compte"] == compte_remises]
+        else:
+            # Si exact, on cherche tous les comptes commençant par le code fourni,
+            # ce qui corrige les problèmes float/int
+            retours = df[df["Compte"].str.match(f"^{compte_retours}")]
+            remises = df[df["Compte"].str.match(f"^{compte_remises}")]
 
-        # ---- Calculs ----
+        # ---- Calculs solde global ----
         ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
         total_retours = retours["Crédit"].sum() - retours["Débit"].sum()
         total_remises = remises["Crédit"].sum() - remises["Débit"].sum()
