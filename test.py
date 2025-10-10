@@ -223,26 +223,23 @@ elif page == "RETURNS EDITION":
         st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
     else:
         param = st.session_state.get("param_comptes", {})
-        st.info("⚠️ Assurez-vous que les comptes de ventes, retours et remises sont paramétrés dans SOCLE EDITION.")
+        st.info("⚠️ Assurez-vous que vos libellés ou comptes retours, ventes et remises sont bien paramétrés.")
         comptes_ventes = param.get("ventes", [])
         comptes_retours = param.get("retours", [])
         comptes_remises = param.get("remises", [])
         
+        # Filtrer SOCLE pour retours
         df = st.session_state["df_pivot"].copy()
-        df["Libelle"] = df.get("Libelle", df["Compte"].astype(str))
+        df_ret = df[df["Compte"].astype(str).str[:len(comptes_retours[0])].isin(comptes_retours)] if comptes_retours else pd.DataFrame()
+        df_ventes = df[df["Compte"].astype(str).str[:len(comptes_ventes[0])].isin(comptes_ventes)] if comptes_ventes else pd.DataFrame()
+        df_remises = df[df["Compte"].astype(str).str[:len(comptes_remises[0])].isin(comptes_remises)] if comptes_remises else pd.DataFrame()
         
-        # Calcul indicateurs
-        ca_brut = df[df["Compte"].astype(str).str[:len(comptes_ventes[0])].isin(comptes_ventes)]["Crédit"].sum() if comptes_ventes else 0
-        total_retours = df[df["Compte"].astype(str).str[:len(comptes_retours[0])].isin(comptes_retours)]["Débit"].sum() if comptes_retours else 0
-        remises = df[df["Compte"].astype(str).str[:len(comptes_remises[0])].isin(comptes_remises)]["Débit"].sum() if comptes_remises else 0
-        st.metric("💰 CA Brut", f"{ca_brut:,.0f} €")
-        st.metric("📦 Retours", f"{total_retours:,.0f} €")
-        st.metric("🏷️ Remises libraires", f"{remises:,.0f} €")
-        
-        top_retours = df[df["Compte"].astype(str).str[:len(comptes_retours[0])].isin(comptes_retours)].groupby("Code_Analytique", as_index=False)["Débit"].sum().sort_values("Débit", ascending=False)
-        st.subheader("Top retours par ISBN")
-        st.dataframe(top_retours)
-
+        if not df_ret.empty:
+            st.subheader("📊 Retours par ISBN")
+            ret_isbn = df_ret.groupby("Code_Analytique", as_index=False).agg({"Débit":"sum"})
+            st.dataframe(ret_isbn)
+        else:
+            st.info("Aucun retour détecté selon vos comptes paramétrés.")
 # =====================
 # CASH EDITION
 # =====================
