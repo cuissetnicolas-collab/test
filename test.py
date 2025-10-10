@@ -226,41 +226,30 @@ elif page == "RETURNS EDITION":
 
     df = st.session_state["df_pivot"].copy()
 
-    # ---- Comptes exacts ----
-    compte_retours = "709000000"
-    compte_remises = "709100000"
+    # ---- Normalisation sécurisée pour filtrage ----
+    df["Compte_norm"] = df["Compte"].astype(str).str.strip().str.replace(".0", "", regex=False)
 
-    # ---- Normalisation sécurisée uniquement pour retours/remises ----
-    def normalize_for_returns(x):
-        if pd.isna(x):
-            return ""
-        try:
-            return str(int(float(x)))  # convert float/int → string
-        except:
-            return str(x).strip()
+    # ---- Comptes racine ----
+    # Retours : tous les comptes qui commencent par '709000'
+    # Remises : tous les comptes qui commencent par '709100'
+    retours = df[df["Compte_norm"].str.startswith("709000")]
+    remises = df[df["Compte_norm"].str.startswith("709100")]
 
-    df["Compte_norm"] = df["Compte"].apply(normalize_for_returns)
-
-    # ---- Filtrage exact ----
-    retours = df[df["Compte_norm"] == compte_retours]
-    remises = df[df["Compte_norm"] == compte_remises]
+    # ---- Ventes (CA brut) : comptes commençant par '701' ----
+    ventes = df[df["Compte"].astype(str).str.startswith("701")]
 
     # ---- Calculs ----
+    ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
     total_retours = retours["Crédit"].sum() - retours["Débit"].sum()
     total_remises = remises["Crédit"].sum() - remises["Débit"].sum()
-
-    # ---- CA brut et net ----
-    # Le CA brut reste basé sur les comptes originaux (non normalisés)
-    ventes = df[df["Compte"].astype(str).str.startswith("701")]
-    ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
     ca_net = ca_brut - total_retours - total_remises
 
     # ---- Affichage résumé global ----
     st.markdown("### 📊 Résumé global")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("CA brut", f"{ca_brut:,.0f} €")
-    col2.metric("Retours (709000000)", f"{total_retours:,.0f} €")
-    col3.metric("Remises (709100000)", f"{total_remises:,.0f} €")
+    col2.metric("Retours", f"{total_retours:,.0f} €")
+    col3.metric("Remises", f"{total_remises:,.0f} €")
     col4.metric("CA net", f"{ca_net:,.0f} €")
 
     # ---- Analyse par ISBN ----
@@ -279,7 +268,7 @@ elif page == "RETURNS EDITION":
     st.plotly_chart(fig, use_container_width=True)
 
     # ---- Vérification des comptes normalisés ----
-    st.write("✅ Vérification des comptes normalisés pour retours/remises :")
+    st.write("✅ Vérification des comptes normalisés :")
     st.write(df[["Compte", "Compte_norm"]].drop_duplicates())
 
 # =====================
