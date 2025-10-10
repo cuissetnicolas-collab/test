@@ -191,16 +191,40 @@ elif page == "RETURNS EDITION":
         retours = st.session_state["param_comptes"]["retours"]
         remises = st.session_state["param_comptes"]["remises"]
 
-        df["Type"] = df["Compte"].astype(str).apply(lambda x: "Vente" if any(x.startswith(v) for v in ventes)
-                                                    else "Retour" if any(x.startswith(r) for r in retours)
-                                                    else "Remise" if any(x.startswith(m) for m in remises)
-                                                    else "Autre")
+        df["Type"] = df["Compte"].astype(str).apply(
+            lambda x: "Vente" if any(x.startswith(v) for v in ventes)
+            else "Retour" if any(x.startswith(r) for r in retours)
+            else "Remise" if any(x.startswith(m) for m in remises)
+            else "Autre"
+        )
         retour_df = df[df["Type"].isin(["Retour","Remise"])].copy()
-        st.subheader("Indicateurs de retours")
+
+        # --- Indicateurs enrichis ---
         total_retours = retour_df[retour_df["Type"]=="Retour"]["Crédit"].sum()
         total_remises = retour_df[retour_df["Type"]=="Remise"]["Crédit"].sum()
+        nb_retours = retour_df[retour_df["Type"]=="Retour"].shape[0]
+        nb_remises = retour_df[retour_df["Type"]=="Remise"].shape[0]
+        montant_moy_retour = total_retours/nb_retours if nb_retours>0 else 0
+        montant_moy_remise = total_remises/nb_remises if nb_remises>0 else 0
+        ca_brut = df[df["Compte"].astype(str).str.startswith(tuple(ventes))]["Crédit"].sum()
+        pct_retours = (total_retours/ca_brut*100) if ca_brut>0 else 0
+        pct_remises = (total_remises/ca_brut*100) if ca_brut>0 else 0
+        top_isbn_retour = retour_df[retour_df["Type"]=="Retour"].groupby("Code_Analytique", as_index=False)["Crédit"].sum().sort_values("Crédit", ascending=False).head(10)
+
+        st.subheader("📊 Indicateurs de retours")
         st.metric("Total retours", f"{total_retours:,.0f} €")
+        st.metric("Nombre retours", f"{nb_retours}")
+        st.metric("Montant moyen retour", f"{montant_moy_retour:,.0f} €")
+        st.metric("Pourcentage retours / CA brut", f"{pct_retours:.2f} %")
         st.metric("Total remises", f"{total_remises:,.0f} €")
+        st.metric("Nombre remises", f"{nb_remises}")
+        st.metric("Montant moyen remise", f"{montant_moy_remise:,.0f} €")
+        st.metric("Pourcentage remises / CA brut", f"{pct_remises:.2f} %")
+
+        st.subheader("📈 Top ISBN les plus retournés")
+        st.dataframe(top_isbn_retour)
+
+        st.subheader("Détail retours et remises")
         st.dataframe(retour_df.head(20))
 
 # =====================
@@ -212,39 +236,38 @@ elif page == "CASH EDITION":
         st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
     else:
         df_pivot = st.session_state["df_pivot"].copy()
-        # --- Trésorerie comme tu avais fourni ---
         date_debut = st.date_input("Date de départ de la trésorerie", pd.to_datetime("2025-04-01"))
         df_pivot["Compte"] = df_pivot["Compte"].astype(str).str.strip()
         df_pivot["Date"] = pd.to_datetime(df_pivot["Date"], errors="coerce")
         df_pivot["Débit"] = pd.to_numeric(df_pivot["Débit"], errors="coerce").fillna(0)
         df_pivot["Crédit"] = pd.to_numeric(df_pivot["Crédit"], errors="coerce").fillna(0)
         comptes_bancaires = df_pivot[df_pivot["Compte"].str.startswith("5")]
-        solde_depart_total = (comptes_bancaires[comptes_bancaires["Date"] <= pd.to_datetime(date_debut)]["Crédit"].sum() - 
-                              comptes_bancaires[comptes_bancaires["Date"] <= pd.to_datetime(date_debut)]["Débit"].sum())
+        solde_depart_df = comptes_bancaires[comptes_bancaires["Date"] <= pd.to_datetime(date_debut)]
+        solde_depart_total = solde_depart_df["Crédit"].sum() - solde_depart_df["Débit"].sum()
         st.info(f"Solde de départ : {solde_depart_total:,.2f} €")
         horizon = st.slider("Horizon de projection (en mois)", 3, 24, 12)
-        croissance_ca = st.number_input("Croissance mensuelle du CA (%)", value=2.0) / 100
-        evolution_charges = st.number_input("Évolution mensuelle des charges (%)", value=1.0) / 100
+        croissance_ca = st.number_input("Croissance mensuelle du CA (%)", value=2.0)/100
+        evolution_charges = st.number_input("Évolution mensuelle des charges (%)", value=1.0)/100
         df_flux = df_pivot[~df_pivot["Compte"].str.startswith("5")].copy()
         df_flux = df_flux.dropna(subset=["Date"])
-        df_flux = df_flux[df_flux["Date"] >= pd.to_datetime(date_debut)]
+        df_flux = df_flux[df_flux["Date"]>=pd.to_datetime(date_debut)]
         df_flux["Mois"] = df_flux["Date"].dt.to_period("M").astype(str)
-        flux_mensuel = df_flux.groupby("Mois").agg({"Débit": "sum", "Crédit": "sum"}).reset_index()
-        flux_mensuel["Solde_mensuel"] = flux_mensuel["Crédit"] - flux_mensuel["Débit"]
+        flux_mensuel = df_flux.groupby("Mois").agg({"Débit":"sum","Crédit":"sum"}).reset_index()
+        flux_mensuel["Solde_mensuel"] = flux_mensuel["Crédit"]-flux_mensuel["Débit"]
         flux_mensuel = flux_mensuel.sort_values("Mois")
         dernier_mois = pd.Period(flux_mensuel["Mois"].max(), freq="M") if not flux_mensuel.empty else pd.Period(date_debut, freq="M")
-        previsions = []
+        previsions=[]
         ca_actuel = flux_mensuel["Crédit"].iloc[-1] if not flux_mensuel.empty else 0
         charges_actuelles = flux_mensuel["Débit"].iloc[-1] if not flux_mensuel.empty else 0
-        for i in range(1, horizon + 1):
-            prochain_mois = (dernier_mois + i).strftime("%Y-%m")
-            ca_actuel *= (1 + croissance_ca)
-            charges_actuelles *= (1 + evolution_charges)
-            solde_prevu = ca_actuel - charges_actuelles
-            previsions.append({"Mois": prochain_mois, "Débit": charges_actuelles, "Crédit": ca_actuel, "Solde_mensuel": solde_prevu})
+        for i in range(1,horizon+1):
+            prochain_mois=(dernier_mois+i).strftime("%Y-%m")
+            ca_actuel*=(1+croissance_ca)
+            charges_actuelles*=(1+evolution_charges)
+            solde_prevu = ca_actuel-charges_actuelles
+            previsions.append({"Mois":prochain_mois,"Débit":charges_actuelles,"Crédit":ca_actuel,"Solde_mensuel":solde_prevu})
         df_prev = pd.DataFrame(previsions)
         df_tresorerie = pd.concat([flux_mensuel, df_prev], ignore_index=True)
-        df_tresorerie["Trésorerie_cumulée"] = solde_depart_total + df_tresorerie["Solde_mensuel"].cumsum()
+        df_tresorerie["Trésorerie_cumulée"]=solde_depart_total+df_tresorerie["Solde_mensuel"].cumsum()
         fig = px.line(df_tresorerie, x="Mois", y="Trésorerie_cumulée", title="📈 Évolution prévisionnelle de la trésorerie", markers=True)
         fig.update_layout(xaxis_title="Mois", yaxis_title="Trésorerie (€)")
         st.plotly_chart(fig, use_container_width=True)
@@ -260,28 +283,26 @@ elif page == "SYNTHESE GLOBALE":
         st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
     else:
         df = st.session_state["df_pivot"].copy()
-        param = st.session_state["param_comptes"]
-        ventes = param["ventes"]
-        retours = param["retours"]
-        remises = param["remises"]
+        params = st.session_state["param_comptes"]
+        ventes = params["ventes"]
+        retours = params["retours"]
+        remises = params["remises"]
+
         ca_brut = df[df["Compte"].astype(str).str.startswith(tuple(ventes))]["Crédit"].sum()
         total_retours = df[df["Compte"].astype(str).str.startswith(tuple(retours))]["Crédit"].sum()
         total_remises = df[df["Compte"].astype(str).str.startswith(tuple(remises))]["Crédit"].sum()
         ca_net = ca_brut - total_retours - total_remises
-        taux_droits = 10.0
-        droits_auteurs = ca_net * taux_droits / 100
-        st.metric("💰 Chiffre d'affaires brut", f"{ca_brut:,.0f} €")
-        st.metric("📦 Retours", f"{total_retours:,.0f} €")
-        st.metric("🔖 Remises", f"{total_remises:,.0f} €")
-        st.metric("📈 Résultat net", f"{ca_net:,.0f} €")
-        st.metric("💰 Droits d’auteurs estimés", f"{droits_auteurs:,.0f} €")
-        df_ca = pd.DataFrame({"Catégorie":["CA Brut","Retours","Remises","CA Net"],"Montant":[ca_brut,total_retours,total_remises,ca_net]})
-        fig1 = px.bar(df_ca, x="Catégorie", y="Montant", title="💹 Synthèse CA et Retours")
-        st.plotly_chart(fig1, use_container_width=True)
-        df_isbn = df.groupby("Code_Analytique", as_index=False).agg({"Débit":"sum","Crédit":"sum"})
-        df_isbn["Résultat"] = df_isbn["Crédit"] - df_isbn["Débit"]
-        df_isbn = df_isbn.sort_values("Résultat", ascending=False).head(10)
-        fig2 = px.bar(df_isbn, x="Code_Analytique", y="Résultat", title="Top 10 ISBN par Résultat")
+        st.metric("CA brut", f"{ca_brut:,.0f} €")
+        st.metric("Total retours", f"{total_retours:,.0f} €")
+        st.metric("Total remises", f"{total_remises:,.0f} €")
+        st.metric("CA net", f"{ca_net:,.0f} €")
+
+        # Top ISBN par résultat
+        df["Résultat"] = df["Crédit"]-df["Débit"]
+        top_isbn = df.groupby("Code_Analytique", as_index=False)["Résultat"].sum().sort_values("Résultat", ascending=False).head(10)
+        st.subheader("Top 10 ISBN par Résultat")
+        st.dataframe(top_isbn)
+        fig2 = px.bar(top_isbn, x="Code_Analytique", y="Résultat", title="Top 10 ISBN par Résultat")
         st.plotly_chart(fig2, use_container_width=True)
 
 # =====================
