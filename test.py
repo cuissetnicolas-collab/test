@@ -190,37 +190,28 @@ elif page == "ROYALTIES EDITION":
 # RETURNS EDITION
 # =====================
 elif page == "RETURNS EDITION":
-    st.header("📦 RETURNS EDITION - Indicateurs retours et remises")
+    st.header("📦 RETURNS EDITION - Gestion des retours")
     if "df_pivot" not in st.session_state:
         st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
     else:
+        param = st.session_state.get("param_comptes", {})
+        st.info("⚠️ Assurez-vous que vos libellés ou comptes retours, ventes et remises sont bien paramétrés.")
+        comptes_ventes = param.get("ventes", [])
+        comptes_retours = param.get("retours", [])
+        comptes_remises = param.get("remises", [])
+        
+        # Filtrer SOCLE pour retours
         df = st.session_state["df_pivot"].copy()
-        params = st.session_state["param_comptes"]
-        ventes = params["ventes"]
-        retours = params["retours"]
-        remises = params["remises"]
-
-        ca_brut = df[df["Compte"].astype(str).str.startswith(tuple(ventes))]["Crédit"].sum()
-        total_retours = df[df["Compte"].astype(str).str.startswith(tuple(retours))]["Crédit"].sum()
-        total_remises = df[df["Compte"].astype(str).str.startswith(tuple(remises))]["Crédit"].sum()
-        pct_retours = (total_retours/ca_brut*100) if ca_brut>0 else 0
-        pct_remises = (total_remises/ca_brut*100) if ca_brut>0 else 0
-
-        st.metric("CA brut", f"{ca_brut:,.0f} €")
-        st.metric("Total retours", f"{total_retours:,.0f} € ({pct_retours:.1f}%)")
-        st.metric("Total remises", f"{total_remises:,.0f} € ({pct_remises:.1f}%)")
-
-        top_retours = df[df["Compte"].astype(str).str.startswith(tuple(retours))].groupby("Code_Analytique", as_index=False)["Crédit"].sum().sort_values("Crédit", ascending=False).head(10)
-        st.subheader("Top 10 ISBN par retours")
-        st.dataframe(top_retours)
-        fig_ret = px.bar(top_retours, x="Code_Analytique", y="Crédit", title="Top 10 ISBN par retours")
-        st.plotly_chart(fig_ret, use_container_width=True)
-
-        top_remises = df[df["Compte"].astype(str).str.startswith(tuple(remises))].groupby("Code_Analytique", as_index=False)["Crédit"].sum().sort_values("Crédit", ascending=False).head(10)
-        st.subheader("Top 10 ISBN par remises")
-        st.dataframe(top_remises)
-        fig_rem = px.bar(top_remises, x="Code_Analytique", y="Crédit", title="Top 10 ISBN par remises")
-        st.plotly_chart(fig_rem, use_container_width=True)
+        df_ret = df[df["Compte"].astype(str).str[:len(comptes_retours[0])].isin(comptes_retours)] if comptes_retours else pd.DataFrame()
+        df_ventes = df[df["Compte"].astype(str).str[:len(comptes_ventes[0])].isin(comptes_ventes)] if comptes_ventes else pd.DataFrame()
+        df_remises = df[df["Compte"].astype(str).str[:len(comptes_remises[0])].isin(comptes_remises)] if comptes_remises else pd.DataFrame()
+        
+        if not df_ret.empty:
+            st.subheader("📊 Retours par ISBN")
+            ret_isbn = df_ret.groupby("Code_Analytique", as_index=False).agg({"Débit":"sum"})
+            st.dataframe(ret_isbn)
+        else:
+            st.info("Aucun retour détecté selon vos comptes paramétrés.")
 
 # =====================
 # CASH EDITION
