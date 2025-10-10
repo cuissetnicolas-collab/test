@@ -226,17 +226,29 @@ elif page == "RETURNS EDITION":
 
     df = st.session_state["df_pivot"].copy()
 
-    # ---- Normalisation sécurisée pour filtrage ----
-    df["Compte_norm"] = df["Compte"].astype(str).str.strip().str.replace(".0", "", regex=False)
+    # ---- Normalisation universelle des comptes ----
+    def normalize_compte(x):
+        if pd.isna(x):
+            return ""
+        try:
+            # Convert float/int en entier puis format 9 chiffres
+            return str(int(float(x))).zfill(9)
+        except:
+            # Si string, nettoyage et completion à 9 chiffres
+            return str(x).strip().zfill(9)
 
-    # ---- Comptes racine ----
-    # Retours : tous les comptes qui commencent par '709000'
-    # Remises : tous les comptes qui commencent par '709100'
-    retours = df[df["Compte_norm"].str.startswith("709000")]
-    remises = df[df["Compte_norm"].str.startswith("709100")]
+    df["Compte_norm"] = df["Compte"].apply(normalize_compte)
 
-    # ---- Ventes (CA brut) : comptes commençant par '701' ----
-    ventes = df[df["Compte"].astype(str).str.startswith("701")]
+    # ---- Comptes exacts ----
+    compte_retours = "709000000"
+    compte_remises = "709100000"
+
+    # ---- Filtrage exact après normalisation ----
+    retours = df[df["Compte_norm"] == compte_retours]
+    remises = df[df["Compte_norm"] == compte_remises]
+
+    # ---- Ventes : comptes commençant par '701' ----
+    ventes = df[df["Compte_norm"].str.startswith("701")]
 
     # ---- Calculs ----
     ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
@@ -248,8 +260,8 @@ elif page == "RETURNS EDITION":
     st.markdown("### 📊 Résumé global")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("CA brut", f"{ca_brut:,.0f} €")
-    col2.metric("Retours", f"{total_retours:,.0f} €")
-    col3.metric("Remises", f"{total_remises:,.0f} €")
+    col2.metric("Retours (709000000)", f"{total_retours:,.0f} €")
+    col3.metric("Remises (709100000)", f"{total_remises:,.0f} €")
     col4.metric("CA net", f"{ca_net:,.0f} €")
 
     # ---- Analyse par ISBN ----
