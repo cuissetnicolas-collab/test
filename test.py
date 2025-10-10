@@ -137,6 +137,22 @@ elif page == "SOCLE EDITION":
             }
             st.success("✅ SOCLE EDITION généré et comptes paramétrés.")
             st.dataframe(pivot.head(20))
+            
+# ---- Vérification rapide des comptes importés ----
+st.subheader("🔍 Vérification des comptes dans le fichier")
+
+# Affiche tous les comptes uniques
+comptes_uniques = df["Compte"].drop_duplicates().sort_values()
+st.write("Liste des comptes uniques :")
+st.write(comptes_uniques)
+
+# Affiche le type de données pour chaque compte
+st.write("Types de données présents dans la colonne 'Compte' :")
+st.write(df["Compte"].apply(type).value_counts())
+
+# Affiche un petit échantillon pour voir le format exact
+st.write("Exemple de 10 comptes pour vérifier le format :")
+st.write(df["Compte"].head(10))            
 
 # =====================
 # REPARTITION CHARGES FIXES
