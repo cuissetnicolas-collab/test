@@ -191,7 +191,7 @@ elif page == "ROYALTIES EDITION":
 # =====================
 elif page == "RETURNS EDITION":
     st.header("📦 RETURNS EDITION - Gestion des retours")
-    
+
     if "df_pivot" not in st.session_state:
         st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
     else:
@@ -199,30 +199,42 @@ elif page == "RETURNS EDITION":
         st.info("ℹ️ Assurez-vous que les comptes retours, remises, ventes et provision sont correctement paramétrés.")
 
         df = st.session_state["df_pivot"].copy()
-        
-        # Comptes exacts
-        comptes_ventes = param.get("ventes", [])
-        comptes_retours = param.get("retours", [])
-        comptes_remises = param.get("remises", [])
-        comptes_provision = param.get("provision", ["681"])  # compte provision par défaut
 
-        # Remplacer NaN par 0
+        # --- Normalisation des comptes ---
+        df["Compte"] = df["Compte"].apply(lambda x: str(int(float(x))).strip() if pd.notna(x) else "")
         df["Débit"] = df["Débit"].fillna(0)
         df["Crédit"] = df["Crédit"].fillna(0)
 
-        # Filtrage précis par compte
-        df_ret = df[df["Compte"].isin(comptes_retours)]
-        df_remises = df[df["Compte"].isin(comptes_remises)]
-        df_ventes = df[df["Compte"].isin(comptes_ventes)]
-        df_prov = df[df["Compte"].isin(comptes_provision)]
+        # --- Comptes exacts ---
+        comptes_ventes = param.get("ventes", [])
+        comptes_retours = param.get("retours", [])
+        comptes_remises = param.get("remises", [])
+        comptes_provision = param.get("provision", ["681"])
 
-        # --------------------
-        # Indicateurs par ISBN
-        # --------------------
+        # --- Filtrage des comptes avec fallback sur startswith si liste vide ---
+        if comptes_retours:
+            df_ret = df[df["Compte"].isin(comptes_retours)]
+        else:
+            df_ret = df[df["Compte"].str.startswith("709000")]
+
+        if comptes_remises:
+            df_remises = df[df["Compte"].isin(comptes_remises)]
+        else:
+            df_remises = df[df["Compte"].str.startswith("709100")]
+
+        df_ventes = df[df["Compte"].isin(comptes_ventes)] if comptes_ventes else pd.DataFrame()
+        df_prov = df[df["Compte"].isin(comptes_provision)] if comptes_provision else pd.DataFrame()
+
+        # --- Vérification si des lignes existent ---
+        st.write(f"Retours détectés : {df_ret.shape[0]}")
+        st.write(f"Remises détectées : {df_remises.shape[0]}")
+        st.write(f"Provisions détectées : {df_prov.shape[0]}")
+
         if not df_ret.empty or not df_remises.empty:
+
             # Retours = solde global (Débit - Crédit)
             if not df_ret.empty:
-                ret_isbn = df_ret.groupby("Code_Analytique", as_index=False).agg({"Débit":"sum", "Crédit":"sum"})
+                ret_isbn = df_ret.groupby("Code_Analytique", as_index=False).agg({"Débit":"sum","Crédit":"sum"})
                 ret_isbn["Montant_retour"] = ret_isbn["Débit"] - ret_isbn["Crédit"]
                 ret_isbn = ret_isbn[["Code_Analytique","Montant_retour"]]
                 st.subheader("📊 Retours par ISBN")
@@ -230,7 +242,7 @@ elif page == "RETURNS EDITION":
 
             # Remises = solde global (Crédit - Débit)
             if not df_remises.empty:
-                rem_isbn = df_remises.groupby("Code_Analytique", as_index=False).agg({"Débit":"sum", "Crédit":"sum"})
+                rem_isbn = df_remises.groupby("Code_Analytique", as_index=False).agg({"Débit":"sum","Crédit":"sum"})
                 rem_isbn["Montant_remise"] = rem_isbn["Crédit"] - rem_isbn["Débit"]
                 rem_isbn = rem_isbn[["Code_Analytique","Montant_remise"]]
                 st.subheader("📊 Remises libraires par ISBN")
