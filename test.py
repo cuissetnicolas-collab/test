@@ -195,21 +195,48 @@ elif page == "RETURNS EDITION":
         st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
     else:
         param = st.session_state.get("param_comptes", {})
-        st.info("⚠️ Assurez-vous que vos libellés ou comptes retours, ventes et remises sont bien paramétrés.")
+        st.info("⚠️ Assurez-vous que vos comptes retours, ventes et remises sont bien paramétrés.")
         comptes_ventes = param.get("ventes", [])
         comptes_retours = param.get("retours", [])
         comptes_remises = param.get("remises", [])
-        
-        # Filtrer SOCLE pour retours
+        comptes_provisions = param.get("provisions", ["681"])  # ajouter provision 681 par défaut
+
+        # Filtrer SOCLE pour retours, ventes et remises
         df = st.session_state["df_pivot"].copy()
-        df_ret = df[df["Compte"].astype(str).str[:len(comptes_retours[0])].isin(comptes_retours)] if comptes_retours else pd.DataFrame()
-        df_ventes = df[df["Compte"].astype(str).str[:len(comptes_ventes[0])].isin(comptes_ventes)] if comptes_ventes else pd.DataFrame()
-        df_remises = df[df["Compte"].astype(str).str[:len(comptes_remises[0])].isin(comptes_remises)] if comptes_remises else pd.DataFrame()
-        
+        df["Compte"] = df["Compte"].astype(str).str.strip()
+        df_ret = df[df["Compte"].str[:len(comptes_retours[0])].isin(comptes_retours)] if comptes_retours else pd.DataFrame()
+        df_ventes = df[df["Compte"].str[:len(comptes_ventes[0])].isin(comptes_ventes)] if comptes_ventes else pd.DataFrame()
+        df_remises = df[df["Compte"].str[:len(comptes_remises[0])].isin(comptes_remises)] if comptes_remises else pd.DataFrame()
+        df_provisions = df[df["Compte"].str[:len(comptes_provisions[0])].isin(comptes_provisions)] if comptes_provisions else pd.DataFrame()
+
+        # Calculs des indicateurs
+        total_ca = df_ventes["Crédit"].sum() if not df_ventes.empty else 0
+        total_ret = df_ret["Crédit"].sum() if not df_ret.empty else 0
+        total_rem = df_remises["Crédit"].sum() if not df_remises.empty else 0
+        total_prov = df_provisions["Débit"].sum() if not df_provisions.empty else 0
+        ca_net = total_ca - total_ret - total_rem
+        taux_retour = (total_ret / total_ca * 100) if total_ca else 0
+        taux_remise = (total_rem / total_ca * 100) if total_ca else 0
+        taux_provision = (total_prov / total_ca * 100) if total_ca else 0
+
+        # Affichage des indicateurs
+        st.subheader("📊 Indicateurs principaux")
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("CA brut", f"{total_ca:,.0f} €")
+        col2.metric("Total retours", f"{total_ret:,.0f} €", f"{taux_retour:.1f} %")
+        col3.metric("Total remises", f"{total_rem:,.0f} €", f"{taux_remise:.1f} %")
+        col4.metric("Provision retours", f"{total_prov:,.0f} €", f"{taux_provision:.1f} %")
+        col5.metric("CA net", f"{ca_net:,.0f} €")
+
+        # Tableau détaillé par ISBN
         if not df_ret.empty:
-            st.subheader("📊 Retours par ISBN")
-            ret_isbn = df_ret.groupby("Code_Analytique", as_index=False).agg({"Débit":"sum"})
-            st.dataframe(ret_isbn)
+            st.subheader("📋 Retours par ISBN")
+            df_ret_isbn = df_ret.groupby("Code_Analytique", as_index=False).agg({
+                "Débit":"sum",
+                "Crédit":"sum"
+            })
+            df_ret_isbn["Solde"] = df_ret_isbn["Crédit"] - df_ret_isbn["Débit"]
+            st.dataframe(df_ret_isbn.style.format({"Débit":"{:,.0f}","Crédit":"{:,.0f}","Solde":"{:,.0f}"}))
         else:
             st.info("Aucun retour détecté selon vos comptes paramétrés.")
 
