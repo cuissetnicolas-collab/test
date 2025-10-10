@@ -226,24 +226,29 @@ elif page == "RETURNS EDITION":
 
     df = st.session_state["df_pivot"].copy()
 
-    # ---- Normalisation sécurisée uniquement pour retours et remises ----
-    def normalize_for_returns(x):
-        if pd.isna(x):
-            return ""
+    # ---- Fonction robuste pour matcher les comptes ----
+    def match_compte(compte, target):
+        """
+        Vérifie si le compte Excel correspond au compte cible,
+        en gérant tous les formats : 709, 000000709, 7.09E+08, etc.
+        """
+        if pd.isna(compte):
+            return False
         try:
-            return str(int(float(x)))  # Convertit float/int en string propre
+            # Convertit en int pour se débarrasser du format scientifique
+            compte_int = int(float(compte))
+            return compte_int == int(target)
         except:
-            return str(x).strip()
-
-    df["Compte_norm"] = df["Compte"].apply(normalize_for_returns)
+            # Si c’est déjà une chaîne
+            return str(compte).strip().lstrip("0") == str(int(target))
 
     # ---- Comptes exacts ----
     compte_retours = "709000000"
     compte_remises = "709100000"
 
     # ---- Filtrage exact ----
-    retours = df[df["Compte_norm"] == compte_retours]
-    remises = df[df["Compte_norm"] == compte_remises]
+    retours = df[df["Compte"].apply(lambda x: match_compte(x, compte_retours))]
+    remises = df[df["Compte"].apply(lambda x: match_compte(x, compte_remises))]
 
     # ---- Ventes : comptes commençant par '701' (CA brut) ----
     ventes = df[df["Compte"].astype(str).str.startswith("701")]
@@ -277,10 +282,9 @@ elif page == "RETURNS EDITION":
                  title="Taux de retour par ISBN", labels={"Code_Analytique": "ISBN", "Taux_retour_%": "% Retours"})
     st.plotly_chart(fig, use_container_width=True)
 
-    # ---- Vérification des comptes normalisés ----
-    st.write("✅ Vérification des comptes normalisés :")
-    st.write(df[["Compte", "Compte_norm"]].drop_duplicates())
-
+    # ---- Vérification des comptes importés ----
+    st.write("✅ Vérification des comptes importés :")
+    st.write(df[["Compte"]].drop_duplicates())
 # =====================
 # SYNTHESE GLOBALE
 # =====================
