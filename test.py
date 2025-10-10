@@ -225,7 +225,18 @@ elif page == "RETURNS EDITION":
         st.stop()
 
     df = st.session_state["df_pivot"].copy()
-    df["Compte"] = df["Compte"].astype(str).str.strip()
+
+    # ---- Nettoyage des comptes ----
+    def format_compte(x):
+        if pd.isna(x):
+            return ""
+        try:
+            # Si c'est un float (ex: 7.09E+08), on le convertit en int puis str
+            return str(int(x))
+        except:
+            return str(x).strip()
+
+    df["Compte"] = df["Compte"].apply(format_compte)
 
     st.subheader("⚙️ Paramétrage des comptes comptables")
     compte_ventes = st.text_input("Numéro de compte des ventes brutes :", value="701")
@@ -235,7 +246,7 @@ elif page == "RETURNS EDITION":
     filtre_type = st.radio("Type de filtrage", ["Par racine", "Compte exact"], index=1)
 
     if st.button("🔍 Lancer l'analyse des retours"):
-        # Filtrage ventes
+        # ---- Filtrage ----
         if filtre_type == "Par racine":
             ventes = df[df["Compte"].str.startswith(compte_ventes)]
             retours = df[df["Compte"].str.startswith(compte_retours)]
@@ -245,13 +256,13 @@ elif page == "RETURNS EDITION":
             retours = df[df["Compte"] == compte_retours]
             remises = df[df["Compte"] == compte_remises]
 
-        # Calcul CA brut et solde retours/remises
+        # ---- Calculs ----
         ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
         total_retours = retours["Crédit"].sum() - retours["Débit"].sum()
         total_remises = remises["Crédit"].sum() - remises["Débit"].sum()
         ca_net = ca_brut - total_retours - total_remises
 
-        # Affichage résumé global
+        # ---- Affichage résumé global ----
         st.markdown("### 📊 Résumé global")
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("CA brut", f"{ca_brut:,.0f} €")
@@ -259,7 +270,7 @@ elif page == "RETURNS EDITION":
         col3.metric("Remises", f"{total_remises:,.0f} €")
         col4.metric("CA net", f"{ca_net:,.0f} €")
 
-        # Analyse par ISBN
+        # ---- Analyse par ISBN ----
         st.markdown("### 🔎 Analyse par ISBN")
         ventes_isbn = ventes.groupby("Code_Analytique", as_index=False).agg({"Crédit": "sum"}).rename(columns={"Crédit": "Ventes"})
         retours_isbn = retours.groupby("Code_Analytique", as_index=False).agg({"Crédit": "sum"}).rename(columns={"Crédit": "Retours"})
@@ -269,7 +280,7 @@ elif page == "RETURNS EDITION":
 
         st.dataframe(df_merge.sort_values("Taux_retour_%", ascending=False))
 
-        # Graphique
+        # ---- Graphique ----
         fig = px.bar(df_merge, x="Code_Analytique", y="Taux_retour_%",
                      title="Taux de retour par ISBN", labels={"Code_Analytique": "ISBN", "Taux_retour_%": "% Retours"})
         st.plotly_chart(fig, use_container_width=True)
