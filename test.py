@@ -220,38 +220,38 @@ elif page == "ROYALTIES EDITION":
 elif page == "RETURNS EDITION":
     st.header("📦 RETURNS EDITION - Analyse des retours et remises libraires")
 
-    st.info("""
-    💡 **Note importante**
-    Les indicateurs s’appuient sur les **numéros de comptes** présents dans votre fichier comptable.
-    Chaque cabinet doit s’assurer que les comptes suivants sont clairement identifiés :
-    - Compte de **ventes brutes** (ex : 701...)
-    - Compte de **remises libraires** (ex : 7091...)
-    - Compte de **retours de livres** (ex : 709...)
-    """)
-
     if "df_pivot" not in st.session_state:
         st.warning("⚠️ Vous devez d'abord générer le SOCLE EDITION.")
         st.stop()
 
     df = st.session_state["df_pivot"].copy()
+    df["Compte"] = df["Compte"].astype(str).str.strip()
 
     st.subheader("⚙️ Paramétrage des comptes comptables")
     compte_ventes = st.text_input("Numéro de compte des ventes brutes :", value="701")
-    compte_retours = st.text_input("Numéro de compte des retours :", value="709")
-    compte_remises = st.text_input("Numéro de compte des remises libraires :", value="7091")
+    compte_retours = st.text_input("Numéro de compte des retours :", value="709000000")
+    compte_remises = st.text_input("Numéro de compte des remises libraires :", value="709100000")
+
+    filtre_type = st.radio("Type de filtrage", ["Par racine", "Compte exact"], index=1)
 
     if st.button("🔍 Lancer l'analyse des retours"):
-        df["Résultat"] = df["Crédit"] - df["Débit"]
+        # Filtrage ventes
+        if filtre_type == "Par racine":
+            ventes = df[df["Compte"].str.startswith(compte_ventes)]
+            retours = df[df["Compte"].str.startswith(compte_retours)]
+            remises = df[df["Compte"].str.startswith(compte_remises)]
+        else:  # Filtrage exact
+            ventes = df[df["Compte"] == compte_ventes]
+            retours = df[df["Compte"] == compte_retours]
+            remises = df[df["Compte"] == compte_remises]
 
-        ventes = df[df["Compte"].astype(str).str.startswith(compte_ventes)]
-        retours = df[df["Compte"].astype(str).str.startswith(compte_retours)]
-        remises = df[df["Compte"].astype(str).str.startswith(compte_remises)]
-
+        # Calcul CA brut et solde retours/remises
         ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
-        total_retours = retours["Débit"].sum() - retours["Crédit"].sum()
-        total_remises = remises["Débit"].sum() - remises["Crédit"].sum()
+        total_retours = retours["Crédit"].sum() - retours["Débit"].sum()
+        total_remises = remises["Crédit"].sum() - remises["Débit"].sum()
         ca_net = ca_brut - total_retours - total_remises
 
+        # Affichage résumé global
         st.markdown("### 📊 Résumé global")
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("CA brut", f"{ca_brut:,.0f} €")
@@ -259,15 +259,17 @@ elif page == "RETURNS EDITION":
         col3.metric("Remises", f"{total_remises:,.0f} €")
         col4.metric("CA net", f"{ca_net:,.0f} €")
 
+        # Analyse par ISBN
         st.markdown("### 🔎 Analyse par ISBN")
-        ventes_isbn = ventes.groupby("Code_Analytique", as_index=False)["Crédit"].sum().rename(columns={"Crédit": "Ventes"})
-        retours_isbn = retours.groupby("Code_Analytique", as_index=False)["Débit"].sum().rename(columns={"Débit": "Retours"})
+        ventes_isbn = ventes.groupby("Code_Analytique", as_index=False).agg({"Crédit": "sum"}).rename(columns={"Crédit": "Ventes"})
+        retours_isbn = retours.groupby("Code_Analytique", as_index=False).agg({"Crédit": "sum"}).rename(columns={"Crédit": "Retours"})
 
         df_merge = pd.merge(ventes_isbn, retours_isbn, on="Code_Analytique", how="outer").fillna(0)
         df_merge["Taux_retour_%"] = np.where(df_merge["Ventes"] != 0, (df_merge["Retours"] / df_merge["Ventes"]) * 100, 0)
 
         st.dataframe(df_merge.sort_values("Taux_retour_%", ascending=False))
 
+        # Graphique
         fig = px.bar(df_merge, x="Code_Analytique", y="Taux_retour_%",
                      title="Taux de retour par ISBN", labels={"Code_Analytique": "ISBN", "Taux_retour_%": "% Retours"})
         st.plotly_chart(fig, use_container_width=True)
