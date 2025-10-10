@@ -226,60 +226,38 @@ elif page == "RETURNS EDITION":
 
     df = st.session_state["df_pivot"].copy()
 
-    # ---- Conversion universelle des comptes ----
+    # ---- Conversion universelle avec padding ----
     def format_compte(x):
         if pd.isna(x):
             return ""
-        elif isinstance(x, (int, np.integer)):
-            return str(x)
-        elif isinstance(x, (float, np.floating)):
-            if x.is_integer():
-                return str(int(x))
-            else:
-                return str(x)
-        else:
-            return str(x).strip()
+        try:
+            x_int = int(float(x))  # convertit float/int
+            return str(x_int).zfill(9)  # force 9 chiffres
+        except:
+            return str(x).strip().zfill(9)
 
     df["Compte_str"] = df["Compte"].apply(format_compte)
 
     # ---- Comptes exacts ----
-    compte_ventes = "701"          # Ajuster si besoin
     compte_retours = "709000000"
     compte_remises = "709100000"
 
-    # ---- Filtrage ----
-    ventes = df[df["Compte_str"].str.startswith(compte_ventes)]
+    # ---- Filtrage exact ----
     retours = df[df["Compte_str"] == compte_retours]
     remises = df[df["Compte_str"] == compte_remises]
 
-    # ---- Calculs ----
-    ca_brut = ventes["Crédit"].sum() - ventes["Débit"].sum()
+    # ---- Calculs solde global (Crédit - Débit) ----
     total_retours = retours["Crédit"].sum() - retours["Débit"].sum()
     total_remises = remises["Crédit"].sum() - remises["Débit"].sum()
-    ca_net = ca_brut - total_retours - total_remises
 
-    # ---- Affichage résumé global ----
-    st.markdown("### 📊 Résumé global")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("CA brut", f"{ca_brut:,.0f} €")
-    col2.metric("Retours (709000000)", f"{total_retours:,.0f} €")
-    col3.metric("Remises (709100000)", f"{total_remises:,.0f} €")
-    col4.metric("CA net", f"{ca_net:,.0f} €")
+    st.markdown("### 📊 Résultat exact par compte")
+    col1, col2 = st.columns(2)
+    col1.metric("Retours (709000000)", f"{total_retours:,.0f} €")
+    col2.metric("Remises (709100000)", f"{total_remises:,.0f} €")
 
-    # ---- Analyse par ISBN ----
-    st.markdown("### 🔎 Analyse par ISBN")
-    ventes_isbn = ventes.groupby("Code_Analytique", as_index=False).agg({"Crédit": "sum"}).rename(columns={"Crédit": "Ventes"})
-    retours_isbn = retours.groupby("Code_Analytique", as_index=False).agg({"Crédit": "sum"}).rename(columns={"Crédit": "Retours"})
-
-    df_merge = pd.merge(ventes_isbn, retours_isbn, on="Code_Analytique", how="outer").fillna(0)
-    df_merge["Taux_retour_%"] = np.where(df_merge["Ventes"] != 0, (df_merge["Retours"] / df_merge["Ventes"]) * 100, 0)
-
-    st.dataframe(df_merge.sort_values("Taux_retour_%", ascending=False))
-
-    # ---- Graphique ----
-    fig = px.bar(df_merge, x="Code_Analytique", y="Taux_retour_%",
-                 title="Taux de retour par ISBN", labels={"Code_Analytique": "ISBN", "Taux_retour_%": "% Retours"})
-    st.plotly_chart(fig, use_container_width=True)
+    # ---- Affiche la table pour vérifier ----
+    st.write("Vérification des comptes après conversion :")
+    st.write(df[["Compte", "Compte_str"]].drop_duplicates())
 # =====================
 # CASH EDITION
 # =====================
