@@ -195,50 +195,56 @@ elif page == "RETURNS EDITION":
     if "df_pivot" not in st.session_state:
         st.warning("⚠️ Générer d'abord le SOCLE EDITION.")
     else:
-        param = st.session_state.get("param_comptes", {})
-        st.info("⚠️ Assurez-vous que les comptes de ventes, retours et remises sont paramétrés dans SOCLE EDITION.")
-        
-        comptes_ventes = param.get("ventes", [])
-        comptes_retours = param.get("retours", [])
-        comptes_remises = param.get("remises", [])
-        
         df = st.session_state["df_pivot"].copy()
-        df["Libelle"] = df.get("Libelle", df["Compte"].astype(str))
+        df["Libelle"] = df.get("Libelle", df["Compte"])
         
-        # ---- CA Brut ----
-        if comptes_ventes:
-            df_ventes = df[df["Compte"].astype(str).str.startswith(tuple(comptes_ventes))].copy()
-            df_ventes["Solde"] = df_ventes["Crédit"] - df_ventes["Débit"]
-            ca_brut = df_ventes["Solde"].sum()
-        else:
-            ca_brut = 0
+        # --- Normalisation des comptes ---
+        def normalize_compte(x):
+            try:
+                return str(int(float(x))).strip()
+            except:
+                return str(x).strip()
         
-        # ---- Retours ----
-        if comptes_retours:
-            df_retours = df[df["Compte"].astype(str).isin(comptes_retours)].copy()
-            df_retours["Solde"] = df_retours["Débit"] - df_retours["Crédit"]
-            total_retours = df_retours["Solde"].sum()
-        else:
-            total_retours = 0
+        df["Compte"] = df["Compte"].apply(normalize_compte)
         
-        # ---- Remises ----
-        if comptes_remises:
-            df_remises = df[df["Compte"].astype(str).isin(comptes_remises)].copy()
-            df_remises["Solde"] = df_remises["Débit"] - df_remises["Crédit"]
-            remises = df_remises["Solde"].sum()
-        else:
-            remises = 0
+        st.subheader("📋 Comptes disponibles dans les données")
+        st.write(sorted(df["Compte"].unique()))
         
-        # Affichage indicateurs
+        # --- Comptes à filtrer ---
+        comptes_ventes = ["701"]          # comptes de ventes
+        mask_ventes = df["Compte"].str.startswith(tuple(comptes_ventes))
+        mask_retours = df["Compte"].str.startswith("709000")
+        mask_remises = df["Compte"].str.startswith("709100")
+        
+        # --- Préparer les colonnes Débit/Crédit ---
+        df["Débit"] = df["Débit"].fillna(0)
+        df["Crédit"] = df["Crédit"].fillna(0)
+        
+        # --- Calcul du solde (Débit - Crédit) ---
+        df["Solde"] = df["Débit"] - df["Crédit"]
+        
+        ca_brut = df.loc[mask_ventes, "Solde"].sum()
+        total_retours = df.loc[mask_retours, "Solde"].sum()
+        remises = df.loc[mask_remises, "Solde"].sum()
+        
+        # --- Affichage des indicateurs ---
         st.metric("💰 CA Brut", f"{ca_brut:,.0f} €")
         st.metric("📦 Retours", f"{total_retours:,.0f} €")
         st.metric("🏷️ Remises libraires", f"{remises:,.0f} €")
         
-        # Top retours par ISBN
-        if comptes_retours:
-            top_retours = df_retours.groupby("Code_Analytique", as_index=False)["Solde"].sum().sort_values("Solde", ascending=False)
+        # --- Top retours par ISBN ---
+        if mask_retours.any():
+            df_retours_isbn = df.loc[mask_retours].copy()
+            df_retours_isbn["Solde_retours"] = df_retours_isbn["Solde"]
+            top_retours = (
+                df_retours_isbn.groupby("Code_Analytique", as_index=False)
+                .agg({"Solde_retours": "sum"})
+                .sort_values("Solde_retours", ascending=False)
+            )
             st.subheader("Top retours par ISBN")
             st.dataframe(top_retours)
+        else:
+            st.info("Aucun retour détecté pour les comptes commençant par 709000.")
 
 
 # =====================
