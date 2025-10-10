@@ -200,8 +200,17 @@ elif page == "RETURNS EDITION":
 
         df = st.session_state["df_pivot"].copy()
 
-        # --- Normalisation des comptes ---
-        df["Compte"] = df["Compte"].apply(lambda x: str(int(float(x))).strip() if pd.notna(x) else "")
+        # --- Normalisation sûre des comptes ---
+        def normalize_compte(x):
+            try:
+                return str(int(float(x))).strip()
+            except (ValueError, TypeError):
+                if pd.isna(x):
+                    return ""
+                return str(x).strip()
+
+        df["Compte"] = df["Compte"].apply(normalize_compte)
+
         df["Débit"] = df["Débit"].fillna(0)
         df["Crédit"] = df["Crédit"].fillna(0)
 
@@ -211,7 +220,7 @@ elif page == "RETURNS EDITION":
         comptes_remises = param.get("remises", [])
         comptes_provision = param.get("provision", ["681"])
 
-        # --- Filtrage des comptes avec fallback sur startswith si liste vide ---
+        # --- Filtrage des comptes avec fallback sur startswith ---
         if comptes_retours:
             df_ret = df[df["Compte"].isin(comptes_retours)]
         else:
@@ -225,7 +234,7 @@ elif page == "RETURNS EDITION":
         df_ventes = df[df["Compte"].isin(comptes_ventes)] if comptes_ventes else pd.DataFrame()
         df_prov = df[df["Compte"].isin(comptes_provision)] if comptes_provision else pd.DataFrame()
 
-        # --- Vérification si des lignes existent ---
+        # --- Vérification des lignes détectées ---
         st.write(f"Retours détectés : {df_ret.shape[0]}")
         st.write(f"Remises détectées : {df_remises.shape[0]}")
         st.write(f"Provisions détectées : {df_prov.shape[0]}")
