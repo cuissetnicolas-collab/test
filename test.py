@@ -102,42 +102,37 @@ if uploaded_file:
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%d/%m/%Y")
 
     # ========================================================
-    # 🔁 REGROUPEMENT PAR FACTURE (clé du nouveau format)
+    # 🔁 GESTION FACTURES MULTI-TVA
     # ========================================================
-    df_factures = (
-        df
-        .groupby("Facture", as_index=False)
-        .agg({
-            "Date": "first",
-            "Client": "first",
-            "HT": "first",
-            "Taux": "first"
-        })
-    )
-
-    # --- Calcul TVA / TTC ---
-    df_factures["TVA"] = (df_factures["HT"] * df_factures["Taux"] / 100).round(2)
-    df_factures["TTC"] = (df_factures["HT"] + df_factures["TVA"]).round(2)
+    # On détecte pour chaque facture si elle contient plusieurs taux
+    facture_taux_count = df.groupby("Facture")["Taux"].nunique().to_dict()
 
     # ========================================================
     # 🧾 GÉNÉRATION ÉCRITURES COMPTABLES
     # ========================================================
     ecritures = []
 
-    for _, row in df_factures.iterrows():
+    for _, row in df.iterrows():
         ht = row["HT"]
-        tva = row["TVA"]
-        ttc = row["TTC"]
-
-        if ht == 0 and ttc == 0:
-            continue
-
-        compte_cli = compte_client(row["Client"])
-        compte_vte = compte_vente(row["Taux"])
+        taux = row["Taux"]
         piece = row["Facture"]
         date = row["Date"]
+        client = row["Client"]
 
-        libelle = f"Facture {piece} - {row['Client']}"
+        if ht == 0:
+            continue
+
+        compte_cli = compte_client(client)
+
+        # Vérifie si la facture contient plusieurs taux
+        if facture_taux_count[piece] > 1:
+            compte_vte = "704300000"  # Compte multi-TVA
+        else:
+            compte_vte = compte_vente(taux)  # Compte classique
+
+        tva = round(ht * taux / 100, 2)
+        ttc = round(ht + tva, 2)
+        libelle = f"Facture {piece} - {client}"
 
         # Client
         ecritures.append({
@@ -146,7 +141,7 @@ if uploaded_file:
             "Numéro de compte": compte_cli,
             "Numéro de pièce": piece,
             "Libellé": libelle,
-            "Débit": round(ttc, 2),
+            "Débit": ttc,
             "Crédit": ""
         })
 
@@ -158,7 +153,7 @@ if uploaded_file:
             "Numéro de pièce": piece,
             "Libellé": libelle,
             "Débit": "",
-            "Crédit": round(ht, 2)
+            "Crédit": ht
         })
 
         # TVA
@@ -170,7 +165,7 @@ if uploaded_file:
                 "Numéro de pièce": piece,
                 "Libellé": libelle,
                 "Débit": "",
-                "Crédit": round(tva, 2)
+                "Crédit": tva
             })
 
     df_out = pd.DataFrame(
@@ -184,7 +179,7 @@ if uploaded_file:
     # ========================================================
     # 📊 CONTRÔLES & EXPORT
     # ========================================================
-    st.success(f"✅ {len(df_factures)} factures → {len(df_out)} écritures générées")
+    st.success(f"✅ {len(df['Facture'].unique())} factures → {len(df_out)} écritures générées")
 
     total_debit = pd.to_numeric(df_out["Débit"], errors="coerce").sum()
     total_credit = pd.to_numeric(df_out["Crédit"], errors="coerce").sum()
