@@ -7,6 +7,8 @@ from io import BytesIO
 # ============================================================
 if "login" not in st.session_state:
     st.session_state["login"] = False
+if "page" not in st.session_state:
+    st.session_state["page"] = "Accueil"
 
 def login(username, password):
     users = {
@@ -17,7 +19,10 @@ def login(username, password):
     }
     if username in users and password == users[username]["password"]:
         st.session_state["login"] = True
+        st.session_state["username"] = username
         st.session_state["name"] = users[username]["name"]
+        st.session_state["page"] = "Accueil"
+        st.success(f"Bienvenue {st.session_state['name']} 👋")
         st.rerun()
     else:
         st.error("❌ Identifiants incorrects")
@@ -25,10 +30,10 @@ def login(username, password):
 if not st.session_state["login"]:
     st.set_page_config(page_title="Connexion", layout="centered")
     st.title("🔑 Connexion espace expert-comptable")
-    username = st.text_input("Identifiant")
-    password = st.text_input("Mot de passe", type="password")
+    username_input = st.text_input("Identifiant")
+    password_input = st.text_input("Mot de passe", type="password")
     if st.button("Connexion"):
-        login(username, password)
+        login(username_input, password_input)
     st.stop()
 
 # ============================================================
@@ -70,15 +75,18 @@ if uploaded_file:
     df = pd.read_excel(uploaded_file, dtype=str)
     df.columns = df.columns.str.strip()
 
+    # Colonnes obligatoires
     required_cols = ["N° Facture", "Date", "Nom Facture", "Total HT", "Taux de tva"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
         st.stop()
 
+    # Renommer colonnes pour simplifier
     df = df[required_cols]
     df.columns = ["Facture","Date","Client","HT","Taux"]
 
+    # Nettoyage
     df["HT"] = df["HT"].apply(clean_amount)
     df["Taux"] = df["Taux"].apply(clean_amount)
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%d/%m/%Y")
@@ -91,7 +99,7 @@ if uploaded_file:
     df = df.merge(multi_tva[["Facture","multi_tva"]], on="Facture", how="left")
 
     # ========================================================
-    # 🔹 Regroupement par facture et par taux
+    # 🔹 Génération des écritures
     # ========================================================
     ecritures = []
 
@@ -100,8 +108,10 @@ if uploaded_file:
         client = group["Client"].iloc[0]
         multi = group["multi_tva"].iloc[0]
 
-        # --- Débit client : somme de toutes les lignes TTC
+        # Calcul TVA ligne par ligne
         group["TVA_ligne"] = (group["HT"] * group["Taux"] / 100).round(2)
+
+        # Débit client = somme TTC
         ttc_total = (group["HT"] + group["TVA_ligne"]).sum().round(2)
         compte_cli = compte_client(client)
         libelle = f"Facture {facture} - {client}"
@@ -116,21 +126,19 @@ if uploaded_file:
             "Crédit": ""
         })
 
-        # --- Crédit vente / HT
         if multi:
+            # Multi-tva : compte 704300
             ht_total = group["HT"].sum().round(2)
-            compte_vte = "704300000"
+            tva_total = group["TVA_ligne"].sum().round(2)
             ecritures.append({
                 "Date": date,
                 "Journal":"VT",
-                "Numéro de compte": compte_vte,
+                "Numéro de compte": "704300000",
                 "Numéro de pièce": facture,
                 "Libellé": libelle,
                 "Débit": "",
                 "Crédit": ht_total
             })
-            # TVA totale
-            tva_total = group["TVA_ligne"].sum().round(2)
             if tva_total > 0.01:
                 ecritures.append({
                     "Date": date,
@@ -142,30 +150,30 @@ if uploaded_file:
                     "Crédit": tva_total
                 })
         else:
-            # facture avec un seul taux : groupe unique
-            for taux, sous_groupe in group.groupby("Taux"):
-                ht_total = sous_groupe["HT"].sum().round(2)
-                tva_total = (ht_total * taux / 100).round(2)
-                compte_vte = compte_vente(taux, multi)
+            # Facture avec un seul taux : groupe unique
+            taux_unique = group["Taux"].iloc[0]
+            ht_total = group["HT"].sum().round(2)
+            tva_total = group["TVA_ligne"].sum().round(2)
+            compte_vte = compte_vente(taux_unique)
+            ecritures.append({
+                "Date": date,
+                "Journal":"VT",
+                "Numéro de compte": compte_vte,
+                "Numéro de pièce": facture,
+                "Libellé": libelle,
+                "Débit": "",
+                "Crédit": ht_total
+            })
+            if tva_total > 0.01:
                 ecritures.append({
                     "Date": date,
                     "Journal":"VT",
-                    "Numéro de compte": compte_vte,
+                    "Numéro de compte":"445740000",
                     "Numéro de pièce": facture,
                     "Libellé": libelle,
                     "Débit": "",
-                    "Crédit": ht_total
+                    "Crédit": tva_total
                 })
-                if tva_total > 0.01:
-                    ecritures.append({
-                        "Date": date,
-                        "Journal":"VT",
-                        "Numéro de compte":"445740000",
-                        "Numéro de pièce": facture,
-                        "Libellé": libelle,
-                        "Débit": "",
-                        "Crédit": tva_total
-                    })
 
     df_out = pd.DataFrame(ecritures, columns=["Date","Journal","Numéro de compte","Numéro de pièce","Libellé","Débit","Crédit"])
 
@@ -181,7 +189,7 @@ if uploaded_file:
     st.subheader("🔍 Aperçu des écritures")
     st.dataframe(df_out.head(20))
 
-    # --- Export Excel ---
+    # Export Excel
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_out.to_excel(writer, index=False, sheet_name="Écritures")
