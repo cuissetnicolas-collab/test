@@ -92,8 +92,9 @@ if uploaded_file:
         date = group["Date"].iloc[0]
         client = group["Client"].iloc[0]
 
-        # Détecte si plusieurs taux de TVA
-        multi_tva = group["Taux"].nunique() > 1
+        # Vérifier si plusieurs taux de TVA dans la facture
+        taux_unique = group["Taux"].unique()
+        multi_tva = len(taux_unique) > 1
 
         # Calcul HT total et TVA total
         ht_total = group["HT"].sum().round(2)
@@ -102,7 +103,7 @@ if uploaded_file:
 
         libelle = f"Facture {facture} - {client}"
         compte_cli = compte_client(client)
-        compte_vte = compte_vente(taux_unique=group["Taux"].iloc[0], multi_tva=multi_tva)
+        compte_vte = compte_vente(taux_unique=taux_unique[0] if not multi_tva else None, multi_tva=multi_tva)
 
         # 🔹 Débit client
         ecritures.append({
