@@ -93,28 +93,26 @@ if uploaded_file:
     df = df.merge(multi_tva[["Facture","multi_tva"]], on="Facture", how="left")
 
     # ========================================================
-    # 🔹 Regroupement par facture
+    # 🔹 Regroupement par facture et par taux si unique
     # ========================================================
-    grouped = df.groupby("Facture")
     ecritures = []
 
-    for facture, group in grouped:
+    for facture, group in df.groupby("Facture"):
         date = group["Date"].iloc[0]
         client = group["Client"].iloc[0]
         multi = group["multi_tva"].iloc[0]
 
-        # HT total = somme des lignes
+        # --- Calculs ---
         ht_total = group["HT"].sum()
-        # TVA totale = somme ligne par ligne
         tva_total = (group["HT"] * group["Taux"] / 100).sum().round(2)
         ttc_total = (ht_total + tva_total).round(2)
 
         compte_cli = compte_client(client)
-        # Si multi-TVA → compte 704300
+
+        # Compte vente : 704300 si multi-TVA, sinon selon le taux
         if multi:
             compte_vte = "704300000"
         else:
-            # Si une seule ligne, compte selon le taux
             compte_vte = compte_vente(group["Taux"].iloc[0], multi)
 
         libelle = f"Facture {facture} - {client}"
