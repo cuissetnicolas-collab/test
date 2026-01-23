@@ -57,11 +57,9 @@ def compte_client(nom):
     lettre = nom[0] if nom and nom[0].isalpha() else "X"
     return f"4110{lettre}0000"
 
-def compte_vente(taux_unique=None, multi_tva=False):
-    if multi_tva:
-        return "704300000"
+def compte_vente(taux):
     mapping = {5.5:"704000000",10.0:"704100000",20.0:"704200000",0.0:"704500000"}
-    return mapping.get(taux_unique,"704300000")
+    return mapping.get(taux,"704300000")
 
 # ============================================================
 # 🚀 TRAITEMENT FICHIER
@@ -70,7 +68,7 @@ if uploaded_file:
     df = pd.read_excel(uploaded_file, dtype=str)
     df.columns = df.columns.str.strip()
 
-    # --- Vérification colonnes utiles ---
+    # --- Sélection colonnes utiles ---
     required_cols = ["N° Facture","Date","Nom Facture","Total HT","Taux de tva"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
@@ -84,32 +82,37 @@ if uploaded_file:
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%d/%m/%Y")
 
     # ============================================================
-    # 🔹 GENERATION ECRITURES PAR FACTURE
+    # 🧾 GÉNÉRATION ÉCRITURES COMPTABLES
     # ============================================================
     ecritures = []
 
-    # On groupe par facture
+    # Groupe par facture
     for facture, group in df.groupby("Facture"):
         date = group["Date"].iloc[0]
         client = group["Client"].iloc[0]
-
-        taux_unique = group["Taux"].unique()
-        multi_tva = len(taux_unique) > 1
-
-        ht_total = group["HT"].sum().round(2)
-        tva_total = (group["HT"] * group["Taux"] / 100).sum().round(2)
-        ttc_total = ht_total + tva_total
-
-        libelle = f"Facture {facture} - {client}"
+        piece = facture
+        libelle = f"Facture {piece} - {client}"
         compte_cli = compte_client(client)
-        compte_vte = compte_vente(taux_unique[0] if not multi_tva else None, multi_tva)
+
+        # Vérifier s'il y a plusieurs taux de TVA
+        if group["Taux"].nunique() > 1:
+            compte_vte = "704300000"
+            ht_total = group["HT"].sum().round(2)
+            tva_total = (group["HT"] * group["Taux"] / 100).sum().round(2)
+        else:
+            taux_unique = group["Taux"].iloc[0]
+            compte_vte = compte_vente(taux_unique)
+            ht_total = group["HT"].sum().round(2)
+            tva_total = (ht_total * taux_unique / 100).round(2)
+
+        ttc_total = ht_total + tva_total
 
         # --- Client (Débit) ---
         ecritures.append({
             "Date": date,
             "Journal": "VT",
             "Numéro de compte": compte_cli,
-            "Numéro de pièce": facture,
+            "Numéro de pièce": piece,
             "Libellé": libelle,
             "Débit": ttc_total,
             "Crédit": ""
@@ -120,7 +123,7 @@ if uploaded_file:
             "Date": date,
             "Journal": "VT",
             "Numéro de compte": compte_vte,
-            "Numéro de pièce": facture,
+            "Numéro de pièce": piece,
             "Libellé": libelle,
             "Débit": "",
             "Crédit": ht_total
@@ -132,7 +135,7 @@ if uploaded_file:
                 "Date": date,
                 "Journal": "VT",
                 "Numéro de compte": "445740000",
-                "Numéro de pièce": facture,
+                "Numéro de pièce": piece,
                 "Libellé": libelle,
                 "Débit": "",
                 "Crédit": tva_total
@@ -144,7 +147,7 @@ if uploaded_file:
     )
 
     # ============================================================
-    # 📊 Contrôles & Export
+    # 📊 CONTRÔLES & EXPORT
     # ============================================================
     st.success(f"✅ {df['Facture'].nunique()} factures → {len(df_out)} écritures générées")
 
