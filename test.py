@@ -108,14 +108,16 @@ if uploaded_file:
         client = group["Client"].iloc[0]
         multi = group["multi_tva"].iloc[0]
 
-        # Calcul TVA ligne par ligne
+        # Débit client = somme HT + somme TVA par ligne
         group["TVA_ligne"] = (group["HT"] * group["Taux"] / 100).round(2)
-
-        # Débit client = somme TTC
         ttc_total = (group["HT"] + group["TVA_ligne"]).sum().round(2)
+        ht_total = group["HT"].sum().round(2)
+        tva_total = group["TVA_ligne"].sum().round(2)
+
         compte_cli = compte_client(client)
         libelle = f"Facture {facture} - {client}"
 
+        # Débit client
         ecritures.append({
             "Date": date,
             "Journal":"VT",
@@ -126,54 +128,32 @@ if uploaded_file:
             "Crédit": ""
         })
 
+        # Crédit vente
         if multi:
-            # Multi-tva : compte 704300
-            ht_total = group["HT"].sum().round(2)
-            tva_total = group["TVA_ligne"].sum().round(2)
-            ecritures.append({
-                "Date": date,
-                "Journal":"VT",
-                "Numéro de compte": "704300000",
-                "Numéro de pièce": facture,
-                "Libellé": libelle,
-                "Débit": "",
-                "Crédit": ht_total
-            })
-            if tva_total > 0.01:
-                ecritures.append({
-                    "Date": date,
-                    "Journal":"VT",
-                    "Numéro de compte":"445740000",
-                    "Numéro de pièce": facture,
-                    "Libellé": libelle,
-                    "Débit": "",
-                    "Crédit": tva_total
-                })
+            compte_vte = compte_vente(None, multi_tva=True)
         else:
-            # Facture avec un seul taux : groupe unique
-            taux_unique = group["Taux"].iloc[0]
-            ht_total = group["HT"].sum().round(2)
-            tva_total = group["TVA_ligne"].sum().round(2)
-            compte_vte = compte_vente(taux_unique)
+            compte_vte = compte_vente(group["Taux"].iloc[0])
+        ecritures.append({
+            "Date": date,
+            "Journal":"VT",
+            "Numéro de compte": compte_vte,
+            "Numéro de pièce": facture,
+            "Libellé": libelle,
+            "Débit": "",
+            "Crédit": ht_total
+        })
+
+        # Crédit TVA
+        if tva_total > 0.01:
             ecritures.append({
                 "Date": date,
                 "Journal":"VT",
-                "Numéro de compte": compte_vte,
+                "Numéro de compte":"445740000",
                 "Numéro de pièce": facture,
                 "Libellé": libelle,
                 "Débit": "",
-                "Crédit": ht_total
+                "Crédit": tva_total
             })
-            if tva_total > 0.01:
-                ecritures.append({
-                    "Date": date,
-                    "Journal":"VT",
-                    "Numéro de compte":"445740000",
-                    "Numéro de pièce": facture,
-                    "Libellé": libelle,
-                    "Débit": "",
-                    "Crédit": tva_total
-                })
 
     df_out = pd.DataFrame(ecritures, columns=["Date","Journal","Numéro de compte","Numéro de pièce","Libellé","Débit","Crédit"])
 
