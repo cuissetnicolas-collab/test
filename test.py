@@ -7,8 +7,6 @@ from io import BytesIO
 # ============================================================
 if "login" not in st.session_state:
     st.session_state["login"] = False
-if "page" not in st.session_state:
-    st.session_state["page"] = "Accueil"
 
 def login(username, password):
     users = {
@@ -19,10 +17,7 @@ def login(username, password):
     }
     if username in users and password == users[username]["password"]:
         st.session_state["login"] = True
-        st.session_state["username"] = username
         st.session_state["name"] = users[username]["name"]
-        st.session_state["page"] = "Accueil"
-        st.success(f"Bienvenue {st.session_state['name']} 👋")
         st.rerun()
     else:
         st.error("❌ Identifiants incorrects")
@@ -89,35 +84,31 @@ if uploaded_file:
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%d/%m/%Y")
 
     # ============================================================
-    # 🔹 Détection multi-TVA
-    # ============================================================
-    multi_tva_df = df.groupby("Facture")["Taux"].nunique().reset_index()
-    multi_tva_df["multi_tva"] = multi_tva_df["Taux"] > 1
-    df = df.merge(multi_tva_df[["Facture","multi_tva"]], on="Facture", how="left")
-
-    # ============================================================
-    # 🔹 Génération des écritures
+    # 🔹 GENERATION DES ECRITURES PAR FACTURE
     # ============================================================
     ecritures = []
 
     for facture, group in df.groupby("Facture"):
         date = group["Date"].iloc[0]
         client = group["Client"].iloc[0]
-        multi = group["multi_tva"].iloc[0]
 
-        # Calcul HT, TVA et TTC corrects
+        # Détecte si plusieurs taux de TVA
+        multi_tva = group["Taux"].nunique() > 1
+
+        # Somme HT et calcul TVA par ligne, puis somme totale
         group["TVA_ligne"] = (group["HT"] * group["Taux"] / 100).round(2)
         ht_total = group["HT"].sum().round(2)
         tva_total = group["TVA_ligne"].sum().round(2)
         ttc_total = ht_total + tva_total
 
-        compte_cli = compte_client(client)
         libelle = f"Facture {facture} - {client}"
+        compte_cli = compte_client(client)
+        compte_vte = compte_vente(taux_unique=group["Taux"].iloc[0], multi_tva=multi_tva)
 
-        # Débit client
+        # 🔹 Débit client
         ecritures.append({
             "Date": date,
-            "Journal":"VT",
+            "Journal": "VT",
             "Numéro de compte": compte_cli,
             "Numéro de pièce": facture,
             "Libellé": libelle,
@@ -125,14 +116,10 @@ if uploaded_file:
             "Crédit": ""
         })
 
-        # Crédit vente
-        if multi:
-            compte_vte = compte_vente(multi_tva=True)
-        else:
-            compte_vte = compte_vente(group["Taux"].iloc[0])
+        # 🔹 Crédit vente
         ecritures.append({
             "Date": date,
-            "Journal":"VT",
+            "Journal": "VT",
             "Numéro de compte": compte_vte,
             "Numéro de pièce": facture,
             "Libellé": libelle,
@@ -140,12 +127,12 @@ if uploaded_file:
             "Crédit": ht_total
         })
 
-        # Crédit TVA
+        # 🔹 Crédit TVA
         if tva_total > 0.01:
             ecritures.append({
                 "Date": date,
-                "Journal":"VT",
-                "Numéro de compte":"445740000",
+                "Journal": "VT",
+                "Numéro de compte": "445740000",
                 "Numéro de pièce": facture,
                 "Libellé": libelle,
                 "Débit": "",
