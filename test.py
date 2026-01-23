@@ -93,20 +93,21 @@ if uploaded_file:
     df = df.merge(multi_tva[["Facture", "multi_tva"]], on="Facture", how="left")
 
     # ========================================================
-    # 🧾 Génération écritures comptables
+    # 🧾 GÉNÉRATION ÉCRITURES COMPTABLES LIGNE PAR LIGNE
     # ========================================================
     ecritures = []
 
     for _, row in df.iterrows():
         ht = row["HT"]
-        ttc = ht * (1 + row["Taux"]/100)
-        tva = ttc - ht
+        taux = row["Taux"]
+        tva = round(ht * taux / 100, 2)
+        ttc = round(ht + tva, 2)
 
         if ht == 0 and ttc == 0:
             continue
 
         compte_cli = compte_client(row["Client"])
-        compte_vte = compte_vente(row["Taux"], row["multi_tva"])
+        compte_vte = compte_vente(taux, row["multi_tva"])
         piece = row["Facture"]
         date = row["Date"]
         libelle = f"Facture {piece} - {row['Client']}"
@@ -118,7 +119,7 @@ if uploaded_file:
             "Numéro de compte": compte_cli,
             "Numéro de pièce": piece,
             "Libellé": libelle,
-            "Débit": round(ttc,2),
+            "Débit": ttc,
             "Crédit": ""
         })
 
@@ -130,11 +131,11 @@ if uploaded_file:
             "Numéro de pièce": piece,
             "Libellé": libelle,
             "Débit": "",
-            "Crédit": round(ht,2)
+            "Crédit": ht
         })
 
         # --- TVA ---
-        if abs(tva) > 0.01:
+        if tva > 0.01:
             ecritures.append({
                 "Date": date,
                 "Journal": "VT",
@@ -142,7 +143,7 @@ if uploaded_file:
                 "Numéro de pièce": piece,
                 "Libellé": libelle,
                 "Débit": "",
-                "Crédit": round(tva,2)
+                "Crédit": tva
             })
 
     df_out = pd.DataFrame(
