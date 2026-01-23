@@ -25,10 +25,10 @@ def login(username, password):
 if not st.session_state["login"]:
     st.set_page_config(page_title="Connexion", layout="centered")
     st.title("🔑 Connexion espace expert-comptable")
-    username_input = st.text_input("Identifiant")
-    password_input = st.text_input("Mot de passe", type="password")
+    username = st.text_input("Identifiant")
+    password = st.text_input("Mot de passe", type="password")
     if st.button("Connexion"):
-        login(username_input, password_input)
+        login(username, password)
     st.stop()
 
 # ============================================================
@@ -70,8 +70,8 @@ if uploaded_file:
     df = pd.read_excel(uploaded_file, dtype=str)
     df.columns = df.columns.str.strip()
 
-    # Colonnes obligatoires
-    required_cols = ["N° Facture", "Date", "Nom Facture", "Total HT", "Taux de tva"]
+    # --- Vérification colonnes utiles ---
+    required_cols = ["N° Facture","Date","Nom Facture","Total HT","Taux de tva"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
@@ -84,28 +84,27 @@ if uploaded_file:
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%d/%m/%Y")
 
     # ============================================================
-    # 🔹 GENERATION DES ECRITURES PAR FACTURE
+    # 🔹 GENERATION ECRITURES PAR FACTURE
     # ============================================================
     ecritures = []
 
+    # On groupe par facture
     for facture, group in df.groupby("Facture"):
         date = group["Date"].iloc[0]
         client = group["Client"].iloc[0]
 
-        # Vérifier si plusieurs taux de TVA dans la facture
         taux_unique = group["Taux"].unique()
         multi_tva = len(taux_unique) > 1
 
-        # Calcul HT total et TVA total
         ht_total = group["HT"].sum().round(2)
         tva_total = (group["HT"] * group["Taux"] / 100).sum().round(2)
         ttc_total = ht_total + tva_total
 
         libelle = f"Facture {facture} - {client}"
         compte_cli = compte_client(client)
-        compte_vte = compte_vente(taux_unique=taux_unique[0] if not multi_tva else None, multi_tva=multi_tva)
+        compte_vte = compte_vente(taux_unique[0] if not multi_tva else None, multi_tva)
 
-        # 🔹 Débit client
+        # --- Client (Débit) ---
         ecritures.append({
             "Date": date,
             "Journal": "VT",
@@ -116,7 +115,7 @@ if uploaded_file:
             "Crédit": ""
         })
 
-        # 🔹 Crédit vente
+        # --- Vente HT (Crédit) ---
         ecritures.append({
             "Date": date,
             "Journal": "VT",
@@ -127,7 +126,7 @@ if uploaded_file:
             "Crédit": ht_total
         })
 
-        # 🔹 Crédit TVA
+        # --- TVA (Crédit) ---
         if tva_total > 0.01:
             ecritures.append({
                 "Date": date,
@@ -160,11 +159,12 @@ if uploaded_file:
     st.subheader("🔍 Aperçu des écritures")
     st.dataframe(df_out.head(20))
 
-    # Export Excel
+    # --- Export Excel ---
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_out.to_excel(writer, index=False, sheet_name="Écritures")
     output.seek(0)
+
     st.download_button(
         "💾 Télécharger les écritures",
         data=output,
