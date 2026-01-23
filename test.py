@@ -95,10 +95,9 @@ if uploaded_file:
         # Détecte si plusieurs taux de TVA
         multi_tva = group["Taux"].nunique() > 1
 
-        # Somme HT et calcul TVA par ligne, puis somme totale
-        group["TVA_ligne"] = (group["HT"] * group["Taux"] / 100).round(2)
+        # Calcul HT total et TVA total
         ht_total = group["HT"].sum().round(2)
-        tva_total = group["TVA_ligne"].sum().round(2)
+        tva_total = (group["HT"] * group["Taux"] / 100).sum().round(2)
         ttc_total = ht_total + tva_total
 
         libelle = f"Facture {facture} - {client}"
@@ -139,7 +138,10 @@ if uploaded_file:
                 "Crédit": tva_total
             })
 
-    df_out = pd.DataFrame(ecritures, columns=["Date","Journal","Numéro de compte","Numéro de pièce","Libellé","Débit","Crédit"])
+    df_out = pd.DataFrame(
+        ecritures,
+        columns=["Date","Journal","Numéro de compte","Numéro de pièce","Libellé","Débit","Crédit"]
+    )
 
     # ============================================================
     # 📊 Contrôles & Export
@@ -148,7 +150,11 @@ if uploaded_file:
 
     total_debit = pd.to_numeric(df_out["Débit"], errors="coerce").sum()
     total_credit = pd.to_numeric(df_out["Crédit"], errors="coerce").sum()
-    st.info(f"**Total Débit :** {total_debit:,.2f} € | **Total Crédit :** {total_credit:,.2f} € | **Écart :** {total_debit - total_credit:,.2f} €")
+    st.info(
+        f"**Total Débit :** {total_debit:,.2f} € | "
+        f"**Total Crédit :** {total_credit:,.2f} € | "
+        f"**Écart :** {total_debit - total_credit:,.2f} €"
+    )
 
     st.subheader("🔍 Aperçu des écritures")
     st.dataframe(df_out.head(20))
