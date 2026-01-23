@@ -62,11 +62,11 @@ def compte_client(nom):
     lettre = nom[0] if nom and nom[0].isalpha() else "X"
     return f"4110{lettre}0000"
 
-def compte_vente(taux, multi_tva=False):
+def compte_vente(taux_unique=None, multi_tva=False):
     if multi_tva:
         return "704300000"
     mapping = {5.5:"704000000",10.0:"704100000",20.0:"704200000",0.0:"704500000"}
-    return mapping.get(taux,"704300000")
+    return mapping.get(taux_unique,"704300000")
 
 # ============================================================
 # 🚀 TRAITEMENT FICHIER
@@ -82,25 +82,22 @@ if uploaded_file:
         st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
         st.stop()
 
-    # Renommer colonnes pour simplifier
-    df = df[required_cols]
+    df = df[required_cols].copy()
     df.columns = ["Facture","Date","Client","HT","Taux"]
-
-    # Nettoyage
     df["HT"] = df["HT"].apply(clean_amount)
     df["Taux"] = df["Taux"].apply(clean_amount)
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%d/%m/%Y")
 
-    # ========================================================
-    # 🔹 Détection factures multi-TVA
-    # ========================================================
-    multi_tva = df.groupby("Facture")["Taux"].nunique().reset_index()
-    multi_tva["multi_tva"] = multi_tva["Taux"] > 1
-    df = df.merge(multi_tva[["Facture","multi_tva"]], on="Facture", how="left")
+    # ============================================================
+    # 🔹 Détection multi-TVA
+    # ============================================================
+    multi_tva_df = df.groupby("Facture")["Taux"].nunique().reset_index()
+    multi_tva_df["multi_tva"] = multi_tva_df["Taux"] > 1
+    df = df.merge(multi_tva_df[["Facture","multi_tva"]], on="Facture", how="left")
 
-    # ========================================================
+    # ============================================================
     # 🔹 Génération des écritures
-    # ========================================================
+    # ============================================================
     ecritures = []
 
     for facture, group in df.groupby("Facture"):
@@ -108,11 +105,11 @@ if uploaded_file:
         client = group["Client"].iloc[0]
         multi = group["multi_tva"].iloc[0]
 
-        # Débit client = somme HT + somme TVA par ligne
+        # Calcul HT, TVA et TTC corrects
         group["TVA_ligne"] = (group["HT"] * group["Taux"] / 100).round(2)
-        ttc_total = (group["HT"] + group["TVA_ligne"]).sum().round(2)
         ht_total = group["HT"].sum().round(2)
         tva_total = group["TVA_ligne"].sum().round(2)
+        ttc_total = ht_total + tva_total
 
         compte_cli = compte_client(client)
         libelle = f"Facture {facture} - {client}"
@@ -130,7 +127,7 @@ if uploaded_file:
 
         # Crédit vente
         if multi:
-            compte_vte = compte_vente(None, multi_tva=True)
+            compte_vte = compte_vente(multi_tva=True)
         else:
             compte_vte = compte_vente(group["Taux"].iloc[0])
         ecritures.append({
@@ -157,9 +154,9 @@ if uploaded_file:
 
     df_out = pd.DataFrame(ecritures, columns=["Date","Journal","Numéro de compte","Numéro de pièce","Libellé","Débit","Crédit"])
 
-    # ========================================================
+    # ============================================================
     # 📊 Contrôles & Export
-    # ========================================================
+    # ============================================================
     st.success(f"✅ {df['Facture'].nunique()} factures → {len(df_out)} écritures générées")
 
     total_debit = pd.to_numeric(df_out["Débit"], errors="coerce").sum()
