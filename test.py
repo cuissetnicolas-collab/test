@@ -50,26 +50,17 @@ uploaded_file = st.file_uploader("📂 Fichier Excel Factura", type=["xls", "xls
 def clean_amount(x):
     if pd.isna(x):
         return 0.0
-    return float(
-        str(x)
-        .replace("€", "")
-        .replace("%", "")
-        .replace(" ", "")
-        .replace(",", ".")
-    )
+    return float(str(x).replace("€", "").replace("%", "").replace(" ", "").replace(",", "."))
 
 def compte_client(nom):
     nom = str(nom).strip().upper()
     lettre = nom[0] if nom and nom[0].isalpha() else "X"
     return f"4110{lettre}0000"
 
-def compte_vente(taux):
-    mapping = {
-        5.5: "704000000",
-        10.0: "704100000",
-        20.0: "704200000",
-        0.0: "704500000"
-    }
+def compte_vente(taux, multi_tva):
+    if multi_tva:
+        return "704300000"
+    mapping = {5.5: "704000000", 10.0: "704100000", 20.0: "704200000", 0.0: "704500000"}
     return mapping.get(taux, "704300000")
 
 # ============================================================
@@ -79,15 +70,8 @@ if uploaded_file:
     df = pd.read_excel(uploaded_file, dtype=str)
     df.columns = df.columns.str.strip()
 
-    # --- Sélection colonnes utiles ---
-    required_cols = [
-        "N° Facture",
-        "Date",
-        "Nom Facture",
-        "Total HT",
-        "Taux de tva"
-    ]
-
+    # --- Colonnes obligatoires ---
+    required_cols = ["N° Facture", "Date", "Nom Facture", "Total HT", "Taux de tva"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
@@ -102,55 +86,43 @@ if uploaded_file:
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%d/%m/%Y")
 
     # ========================================================
-    # 🔁 REGROUPEMENT PAR FACTURE (clé du nouveau format)
+    # 🔁 Détection des factures multi-TVA
     # ========================================================
-    df_factures = (
-        df
-        .groupby("Facture", as_index=False)
-        .agg({
-            "Date": "first",
-            "Client": "first",
-            "HT": "first",
-            "Taux": "first"
-        })
-    )
-
-    # --- Calcul TVA / TTC ---
-    df_factures["TVA"] = (df_factures["HT"] * df_factures["Taux"] / 100).round(2)
-    df_factures["TTC"] = (df_factures["HT"] + df_factures["TVA"]).round(2)
+    multi_tva = df.groupby("Facture")["Taux"].nunique().reset_index()
+    multi_tva["multi_tva"] = multi_tva["Taux"] > 1
+    df = df.merge(multi_tva[["Facture", "multi_tva"]], on="Facture", how="left")
 
     # ========================================================
-    # 🧾 GÉNÉRATION ÉCRITURES COMPTABLES
+    # 🧾 Génération écritures comptables
     # ========================================================
     ecritures = []
 
-    for _, row in df_factures.iterrows():
+    for _, row in df.iterrows():
         ht = row["HT"]
-        tva = row["TVA"]
-        ttc = row["TTC"]
+        ttc = ht * (1 + row["Taux"]/100)
+        tva = ttc - ht
 
         if ht == 0 and ttc == 0:
             continue
 
         compte_cli = compte_client(row["Client"])
-        compte_vte = compte_vente(row["Taux"])
+        compte_vte = compte_vente(row["Taux"], row["multi_tva"])
         piece = row["Facture"]
         date = row["Date"]
-
         libelle = f"Facture {piece} - {row['Client']}"
 
-        # Client
+        # --- Client ---
         ecritures.append({
             "Date": date,
             "Journal": "VT",
             "Numéro de compte": compte_cli,
             "Numéro de pièce": piece,
             "Libellé": libelle,
-            "Débit": round(ttc, 2),
+            "Débit": round(ttc,2),
             "Crédit": ""
         })
 
-        # Vente HT
+        # --- Vente HT ---
         ecritures.append({
             "Date": date,
             "Journal": "VT",
@@ -158,10 +130,10 @@ if uploaded_file:
             "Numéro de pièce": piece,
             "Libellé": libelle,
             "Débit": "",
-            "Crédit": round(ht, 2)
+            "Crédit": round(ht,2)
         })
 
-        # TVA
+        # --- TVA ---
         if abs(tva) > 0.01:
             ecritures.append({
                 "Date": date,
@@ -170,25 +142,21 @@ if uploaded_file:
                 "Numéro de pièce": piece,
                 "Libellé": libelle,
                 "Débit": "",
-                "Crédit": round(tva, 2)
+                "Crédit": round(tva,2)
             })
 
     df_out = pd.DataFrame(
         ecritures,
-        columns=[
-            "Date", "Journal", "Numéro de compte",
-            "Numéro de pièce", "Libellé", "Débit", "Crédit"
-        ]
+        columns=["Date", "Journal", "Numéro de compte", "Numéro de pièce", "Libellé", "Débit", "Crédit"]
     )
 
     # ========================================================
-    # 📊 CONTRÔLES & EXPORT
+    # 📊 Contrôles & export
     # ========================================================
-    st.success(f"✅ {len(df_factures)} factures → {len(df_out)} écritures générées")
+    st.success(f"✅ {df['Facture'].nunique()} factures → {len(df_out)} écritures générées")
 
     total_debit = pd.to_numeric(df_out["Débit"], errors="coerce").sum()
     total_credit = pd.to_numeric(df_out["Crédit"], errors="coerce").sum()
-
     st.info(
         f"**Total Débit :** {total_debit:,.2f} € | "
         f"**Total Crédit :** {total_credit:,.2f} € | "
