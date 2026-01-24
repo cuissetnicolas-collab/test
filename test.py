@@ -150,9 +150,10 @@ if uploaded_file:
 
         # Calcul TVA
         if multi:
-            tva = sum(
-                (lignes_valides["HT_ligne"] * lignes_valides["Taux"] / 100)
-            ).round(2)
+            tva = round(
+    (lignes_valides["HT_ligne"] * lignes_valides["Taux"] / 100).sum(),
+    2
+)
         else:
             tva = round(ht_facture * taux_final / 100, 2)
 
