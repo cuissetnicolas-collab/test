@@ -45,25 +45,30 @@ if st.button("🔓 Déconnexion"):
 uploaded_file = st.file_uploader("📂 Fichier Excel Factura", type=["xls", "xlsx"])
 
 # ============================================================
-# 🧠 FONCTIONS UTILITAIRES
+# 🧠 FONCTIONS
 # ============================================================
 def clean_amount(x):
     if pd.isna(x):
         return 0.0
-    return float(
-        str(x)
-        .replace("€", "")
-        .replace("%", "")
-        .replace(" ", "")
-        .replace(",", ".")
-    )
+    try:
+        return float(
+            str(x)
+            .replace("€", "")
+            .replace("%", "")
+            .replace(" ", "")
+            .replace(",", ".")
+        )
+    except:
+        return 0.0
 
 def compte_client(nom):
     nom = str(nom).strip().upper()
     lettre = nom[0] if nom and nom[0].isalpha() else "X"
     return f"4110{lettre}0000"
 
-def compte_vente(taux):
+def compte_vente(taux, multi):
+    if multi:
+        return "704300000"
     mapping = {
         5.5: "704000000",
         10.0: "704100000",
@@ -73,7 +78,7 @@ def compte_vente(taux):
     return mapping.get(taux, "704300000")
 
 # ============================================================
-# 🚀 TRAITEMENT FICHIER
+# 🚀 TRAITEMENT
 # ============================================================
 if uploaded_file:
     df = pd.read_excel(uploaded_file, dtype=str)
@@ -83,6 +88,8 @@ if uploaded_file:
         "N° Facture",
         "Date",
         "Nom Facture",
+        "* Quantité",
+        "Total HT d'origine sur quantité unitaire",
         "Total HT",
         "Taux de tva"
     ]
@@ -93,62 +100,73 @@ if uploaded_file:
         st.stop()
 
     df = df[required_cols]
-    df.columns = ["Facture", "Date", "Client", "HT", "Taux"]
+    df.columns = [
+        "Facture",
+        "Date",
+        "Client",
+        "Qte",
+        "HT_unitaire",
+        "HT_facture",
+        "Taux"
+    ]
 
-    df["HT"] = df["HT"].apply(clean_amount)
-    df["Taux"] = df["Taux"].apply(clean_amount)
+    # Nettoyage
+    for col in ["Qte", "HT_unitaire", "HT_facture", "Taux"]:
+        df[col] = df[col].apply(clean_amount)
+
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%d/%m/%Y")
 
-    # ========================================================
-    # ✅ REGROUPEMENT CORRECT PAR FACTURE
-    # ========================================================
-    df_factures = (
-        df
-        .groupby("Facture")
-        .agg({
-            "Date": "first",
-            "Client": "first",
-            "HT": "max",                 # 🔑 total HT facture
-            "Taux": lambda x: list(set(x))
-        })
-        .reset_index()
-    )
+    # Calcul HT ligne réel
+    df["HT_ligne"] = (df["Qte"] * df["HT_unitaire"]).round(2)
 
     # ========================================================
-    # 🧾 GÉNÉRATION ÉCRITURES
+    # 🧠 ANALYSE PAR FACTURE
     # ========================================================
     ecritures = []
+    factures = df["Facture"].unique()
 
-    for _, row in df_factures.iterrows():
-        ht = row["HT"]
-        taux_list = row["Taux"]
+    for facture in factures:
+        df_f = df[df["Facture"] == facture]
 
-        if ht == 0:
-            continue
+        date = df_f["Date"].iloc[0]
+        client = df_f["Client"].iloc[0]
+        compte_cli = compte_client(client)
 
-        # Multi taux → compte 704300
-        if len(taux_list) == 1:
-            taux = taux_list[0]
-            compte_vte = compte_vente(taux)
-            tva = round(ht * taux / 100, 2)
+        # HT facture (fourni par Factura)
+        ht_facture = df_f["HT_facture"].iloc[0]
+
+        # lignes exploitables uniquement
+        lignes_valides = df_f[df_f["HT_ligne"] > 0]
+
+        taux_valides = sorted(lignes_valides["Taux"].unique())
+
+        # Détermination mono / multi
+        if len(taux_valides) == 1:
+            multi = False
+            taux_final = taux_valides[0]
         else:
-            taux = 0
-            compte_vte = "704300000"
-            tva = 0.0
+            multi = True
+            taux_final = None
 
-        ttc = round(ht + tva, 2)
+        # Calcul TVA
+        if multi:
+            tva = sum(
+                (lignes_valides["HT_ligne"] * lignes_valides["Taux"] / 100)
+            ).round(2)
+        else:
+            tva = round(ht_facture * taux_final / 100, 2)
 
-        compte_cli = compte_client(row["Client"])
-        piece = row["Facture"]
-        date = row["Date"]
-        libelle = f"Facture {piece} - {row['Client']}"
+        ttc = round(ht_facture + tva, 2)
+
+        libelle = f"Facture {facture} - {client}"
+        compte_vte = compte_vente(taux_final, multi)
 
         # Client
         ecritures.append({
             "Date": date,
             "Journal": "VT",
             "Numéro de compte": compte_cli,
-            "Numéro de pièce": piece,
+            "Numéro de pièce": facture,
             "Libellé": libelle,
             "Débit": ttc,
             "Crédit": ""
@@ -159,41 +177,47 @@ if uploaded_file:
             "Date": date,
             "Journal": "VT",
             "Numéro de compte": compte_vte,
-            "Numéro de pièce": piece,
+            "Numéro de pièce": facture,
             "Libellé": libelle,
             "Débit": "",
-            "Crédit": ht
+            "Crédit": ht_facture
         })
 
-        # TVA uniquement si mono-taux
-        if tva > 0:
+        # TVA
+        if abs(tva) > 0.01:
             ecritures.append({
                 "Date": date,
                 "Journal": "VT",
                 "Numéro de compte": "445740000",
-                "Numéro de pièce": piece,
+                "Numéro de pièce": facture,
                 "Libellé": libelle,
                 "Débit": "",
                 "Crédit": tva
             })
 
-    df_out = pd.DataFrame(ecritures)
+    df_out = pd.DataFrame(
+        ecritures,
+        columns=[
+            "Date", "Journal", "Numéro de compte",
+            "Numéro de pièce", "Libellé", "Débit", "Crédit"
+        ]
+    )
 
     # ========================================================
-    # 📊 CONTRÔLES & EXPORT
+    # 📊 CONTROLES & EXPORT
     # ========================================================
-    st.success(f"✅ {len(df_factures)} factures → {len(df_out)} écritures générées")
-
     total_debit = pd.to_numeric(df_out["Débit"], errors="coerce").sum()
     total_credit = pd.to_numeric(df_out["Crédit"], errors="coerce").sum()
 
+    st.success(f"✅ {df['Facture'].nunique()} factures traitées")
     st.info(
-        f"**Total Débit :** {total_debit:,.2f} € | "
-        f"**Total Crédit :** {total_credit:,.2f} € | "
+        f"**Débit :** {total_debit:,.2f} € | "
+        f"**Crédit :** {total_credit:,.2f} € | "
         f"**Écart :** {total_debit - total_credit:,.2f} €"
     )
 
-    st.dataframe(df_out)
+    st.subheader("🔍 Aperçu")
+    st.dataframe(df_out.head(20))
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
