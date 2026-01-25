@@ -45,21 +45,25 @@ if st.button("🔓 Déconnexion"):
 uploaded_file = st.file_uploader("📂 Fichier Excel Factura", type=["xls", "xlsx"])
 
 # ============================================================
-# 🧠 FONCTIONS
+# 🧠 FONCTIONS UTILITAIRES
 # ============================================================
 def clean_amount(x):
     if pd.isna(x):
         return 0.0
-    return float(str(x).replace("€", "").replace("%", "").replace(" ", "").replace(",", "."))
+    return float(
+        str(x)
+        .replace("€", "")
+        .replace("%", "")
+        .replace(" ", "")
+        .replace(",", ".")
+    )
 
 def compte_client(nom):
     nom = str(nom).strip().upper()
     lettre = nom[0] if nom and nom[0].isalpha() else "X"
     return f"4110{lettre}0000"
 
-def compte_vente(taux, multi):
-    if multi:
-        return "704300000"
+def compte_vente_mono(taux):
     mapping = {
         5.5: "704000000",
         10.0: "704100000",
@@ -98,54 +102,51 @@ if uploaded_file:
     ecritures = []
 
     # ========================================================
-    # 🔁 TRAITEMENT FACTURE PAR FACTURE
+    # 🔒 BOUCLE UNIQUE PAR FACTURE (ANTI-DOUBLON)
     # ========================================================
     for facture, g in df.groupby("Facture"):
+
         date = g["Date"].iloc[0]
         client = g["Client"].iloc[0]
         compte_cli = compte_client(client)
         libelle = f"Facture {facture} - {client}"
 
-        # HT par taux (ligne par ligne)
-        ht_par_taux = g.groupby("Taux")["HT"].sum()
+        ht_facture = g["HT"].max()  # Total HT facture (répété sur lignes)
+        taux_uniques = sorted(g["Taux"].dropna().unique())
 
-        multi_tva = len(ht_par_taux) > 1
+        if ht_facture == 0:
+            continue
 
-        ht_total = ht_par_taux.sum()
-        tva_total = sum(ht * taux / 100 for taux, ht in ht_par_taux.items())
-        ttc = round(ht_total + tva_total, 2)
+        # ====================================================
+        # 🧮 CALCUL TVA
+        # ====================================================
+        if len(taux_uniques) == 1:
+            # ----- MONO TVA -----
+            taux = taux_uniques[0]
+            tva = round(ht_facture * taux / 100, 2)
+            ttc = round(ht_facture + tva, 2)
 
-        # Client
-        ecritures.append({
-            "Date": date,
-            "Journal": "VT",
-            "Numéro de compte": compte_cli,
-            "Numéro de pièce": facture,
-            "Libellé": libelle,
-            "Débit": round(ttc, 2),
-            "Crédit": ""
-        })
+            ecritures.append({
+                "Date": date,
+                "Journal": "VT",
+                "Numéro de compte": compte_cli,
+                "Numéro de pièce": facture,
+                "Libellé": libelle,
+                "Débit": ttc,
+                "Crédit": ""
+            })
 
-        # Vente HT (UNE seule ligne)
-        compte_vte = compte_vente(
-            taux=list(ht_par_taux.index)[0],
-            multi=multi_tva
-        )
+            ecritures.append({
+                "Date": date,
+                "Journal": "VT",
+                "Numéro de compte": compte_vente_mono(taux),
+                "Numéro de pièce": facture,
+                "Libellé": libelle,
+                "Débit": "",
+                "Crédit": ht_facture
+            })
 
-        ecritures.append({
-            "Date": date,
-            "Journal": "VT",
-            "Numéro de compte": compte_vte,
-            "Numéro de pièce": facture,
-            "Libellé": libelle,
-            "Débit": "",
-            "Crédit": round(ht_total, 2)
-        })
-
-        # TVA par taux
-        for taux, ht in ht_par_taux.items():
-            tva = round(ht * taux / 100, 2)
-            if abs(tva) > 0.01:
+            if tva != 0:
                 ecritures.append({
                     "Date": date,
                     "Journal": "VT",
@@ -156,26 +157,68 @@ if uploaded_file:
                     "Crédit": tva
                 })
 
-    df_out = pd.DataFrame(ecritures)
+        else:
+            # ----- MULTI TVA (sécurisé) -----
+            tva_totale = 0
+
+            for taux in taux_uniques:
+                part_ht = ht_facture * (
+                    (g.loc[g["Taux"] == taux, "HT"].count()) / len(g)
+                )
+                tva_part = round(part_ht * taux / 100, 2)
+                tva_totale += tva_part
+
+                if tva_part != 0:
+                    ecritures.append({
+                        "Date": date,
+                        "Journal": "VT",
+                        "Numéro de compte": "445740000",
+                        "Numéro de pièce": facture,
+                        "Libellé": f"{libelle} TVA {taux}%",
+                        "Débit": "",
+                        "Crédit": tva_part
+                    })
+
+            ttc = round(ht_facture + tva_totale, 2)
+
+            ecritures.append({
+                "Date": date,
+                "Journal": "VT",
+                "Numéro de compte": compte_cli,
+                "Numéro de pièce": facture,
+                "Libellé": libelle,
+                "Débit": ttc,
+                "Crédit": ""
+            })
+
+            ecritures.append({
+                "Date": date,
+                "Journal": "VT",
+                "Numéro de compte": "704300000",
+                "Numéro de pièce": facture,
+                "Libellé": libelle,
+                "Débit": "",
+                "Crédit": ht_facture
+            })
 
     # ========================================================
-    # 📊 CONTRÔLES
+    # 📊 SORTIE
     # ========================================================
+    df_out = pd.DataFrame(ecritures)
+
+    st.success(f"✅ {df_out['Numéro de pièce'].nunique()} factures générées")
+
     total_debit = pd.to_numeric(df_out["Débit"], errors="coerce").sum()
     total_credit = pd.to_numeric(df_out["Crédit"], errors="coerce").sum()
 
-    st.success("✅ Écritures générées")
     st.info(
-        f"**Débit :** {total_debit:.2f} € | "
-        f"**Crédit :** {total_credit:.2f} € | "
-        f"**Écart :** {total_debit - total_credit:.2f} €"
+        f"Débit : {total_debit:,.2f} € | "
+        f"Crédit : {total_credit:,.2f} € | "
+        f"Écart : {total_debit - total_credit:,.2f} €"
     )
 
     st.dataframe(df_out.head(20))
 
-    # ========================================================
-    # 📤 EXPORT
-    # ========================================================
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_out.to_excel(writer, index=False, sheet_name="Écritures")
