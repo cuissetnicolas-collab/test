@@ -1,19 +1,51 @@
 import streamlit as st
 import pandas as pd
+from io import BytesIO
 
 # ============================================================
-# CONFIG
+# 🔐 AUTHENTIFICATION
 # ============================================================
-st.set_page_config(page_title="Générateur écritures ventes", layout="centered")
-st.title("📘 Générateur d'écritures comptables – Ventes")
+if "login" not in st.session_state:
+    st.session_state["login"] = False
+
+def login(username, password):
+    users = {
+        "aurore": {"password": "12345", "name": "Aurore Demoulin"},
+        "laure.froidefond": {"password": "Laure2019$", "name": "Laure Froidefond"},
+        "Bruno": {"password": "Toto1963$", "name": "Bruno"},
+        "Manana": {"password": "193827", "name": "Manana"}
+    }
+    if username in users and password == users[username]["password"]:
+        st.session_state["login"] = True
+        st.session_state["name"] = users[username]["name"]
+        st.rerun()
+    else:
+        st.error("❌ Identifiants incorrects")
+
+if not st.session_state["login"]:
+    st.set_page_config(page_title="Connexion", layout="centered")
+    st.title("🔑 Connexion – Générateur d’écritures")
+    username = st.text_input("Identifiant")
+    password = st.text_input("Mot de passe", type="password")
+    if st.button("Connexion"):
+        login(username, password)
+    st.stop()
 
 # ============================================================
-# UPLOAD
+# 🎯 PAGE PRINCIPALE
 # ============================================================
+st.set_page_config(page_title="Écritures ventes", page_icon="📘", layout="centered")
+st.title("📘 Générateur d’écritures comptables – Ventes")
+st.caption(f"Connecté en tant que **{st.session_state['name']}**")
+
+if st.button("🔓 Déconnexion"):
+    st.session_state["login"] = False
+    st.rerun()
+
 uploaded_file = st.file_uploader("📂 Fichier Excel Factura", type=["xls", "xlsx"])
 
 # ============================================================
-# FONCTIONS
+# 🧠 FONCTIONS
 # ============================================================
 def clean_amount(x):
     if pd.isna(x):
@@ -25,7 +57,7 @@ def compte_client(nom):
     lettre = nom[0] if nom and nom[0].isalpha() else "X"
     return f"4110{lettre}0000"
 
-def compte_vente(taux):
+def compte_vente_mono(taux):
     return {
         5.5: "704000000",
         10.0: "704100000",
@@ -34,10 +66,9 @@ def compte_vente(taux):
     }.get(taux, "704300000")
 
 # ============================================================
-# TRAITEMENT
+# 🚀 TRAITEMENT
 # ============================================================
 if uploaded_file:
-
     df = pd.read_excel(uploaded_file, dtype=str)
     df.columns = df.columns.str.strip()
 
@@ -60,114 +91,98 @@ if uploaded_file:
     ecritures = []
 
     for facture, g in df.groupby("Facture"):
-
         date = g["Date"].iloc[0]
         client = g["Client"].iloc[0]
         ht_facture = g["HT_FACTURE"].max()
         compte_cli = compte_client(client)
         libelle = f"Facture {facture} - {client}"
 
-        # 🔎 ANALYSE DES LIGNES
-        lignes_avec_ht = g[g["HT_LIGNE"] != 0]
-        taux_non_nuls = sorted(g.loc[g["Taux"] != 0, "Taux"].unique())
+        # Taux réellement exploitables
+        taux_non_nuls = sorted(t for t in g["Taux"].unique() if t != 0)
 
         # ====================================================
-        # CAS 1 — HT LIGNE = 0 PARTOUT → RAISONNEMENT FACTURE
+        # MONO TVA
         # ====================================================
-        if lignes_avec_ht.empty:
+        if len(taux_non_nuls) <= 1:
+            taux = taux_non_nuls[0] if taux_non_nuls else 0.0
+            tva = round(ht_facture * taux / 100, 2)
+            ttc = round(ht_facture + tva, 2)
 
-            taux_uniques = sorted(g["Taux"].unique())
+            ecritures.append({
+                "Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
+                "Numéro de pièce": facture, "Libellé": libelle,
+                "Débit": ttc, "Crédit": ""
+            })
 
-            # MONO TVA (y compris 0 %)
-            if len(taux_uniques) == 1:
-                taux = taux_uniques[0]
-                tva = round(ht_facture * taux / 100, 2)
-                ttc = round(ht_facture + tva, 2)
+            ecritures.append({
+                "Date": date, "Journal": "VT",
+                "Numéro de compte": compte_vente_mono(taux),
+                "Numéro de pièce": facture, "Libellé": libelle,
+                "Débit": "", "Crédit": ht_facture
+            })
 
+            if tva != 0:
                 ecritures.append({
-                    "Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
+                    "Date": date, "Journal": "VT", "Numéro de compte": "445740000",
                     "Numéro de pièce": facture, "Libellé": libelle,
-                    "Débit": ttc, "Crédit": ""
+                    "Débit": "", "Crédit": tva
                 })
 
-                ecritures.append({
-                    "Date": date, "Journal": "VT", "Numéro de compte": compte_vente(taux),
-                    "Numéro de pièce": facture, "Libellé": libelle,
-                    "Débit": "", "Crédit": ht_facture
-                })
-
-                if taux != 0:
-                    ecritures.append({
-                        "Date": date, "Journal": "VT", "Numéro de compte": "445740000",
-                        "Numéro de pièce": facture, "Libellé": libelle,
-                        "Débit": "", "Crédit": tva
-                    })
-
-            else:
-                st.warning(f"⚠️ Facture {facture} : plusieurs taux mais HT non ventilé")
-
         # ====================================================
-        # CAS 2 — VRAI MULTI TVA (HT PAR LIGNE)
+        # MULTI TVA
         # ====================================================
         else:
-            if len(taux_non_nuls) <= 1:
-                # MONO TVA malgré plusieurs lignes
-                taux = taux_non_nuls[0] if taux_non_nuls else 0.0
-                tva = round(ht_facture * taux / 100, 2)
-                ttc = round(ht_facture + tva, 2)
+            tva_totale = 0.0
+
+            for taux in taux_non_nuls:
+                base_ht = g.loc[
+                    (g["Taux"] == taux) & (g["HT_LIGNE"] != 0),
+                    "HT_LIGNE"
+                ].sum()
+
+                if base_ht == 0:
+                    continue
+
+                tva_ligne = round(base_ht * taux / 100, 2)
+                tva_totale += tva_ligne
 
                 ecritures.append({
-                    "Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
-                    "Numéro de pièce": facture, "Libellé": libelle,
-                    "Débit": ttc, "Crédit": ""
+                    "Date": date, "Journal": "VT", "Numéro de compte": "445740000",
+                    "Numéro de pièce": facture,
+                    "Libellé": f"{libelle} TVA {taux}%",
+                    "Débit": "", "Crédit": tva_ligne
                 })
 
-                ecritures.append({
-                    "Date": date, "Journal": "VT", "Numéro de compte": compte_vente(taux),
-                    "Numéro de pièce": facture, "Libellé": libelle,
-                    "Débit": "", "Crédit": ht_facture
-                })
+            ttc = round(ht_facture + tva_totale, 2)
 
-                if taux != 0:
-                    ecritures.append({
-                        "Date": date, "Journal": "VT", "Numéro de compte": "445740000",
-                        "Numéro de pièce": facture, "Libellé": libelle,
-                        "Débit": "", "Crédit": tva
-                    })
+            ecritures.append({
+                "Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
+                "Numéro de pièce": facture, "Libellé": libelle,
+                "Débit": ttc, "Crédit": ""
+            })
 
-            else:
-                # VRAI MULTI TVA
-                tva_totale = 0
+            ecritures.append({
+                "Date": date, "Journal": "VT", "Numéro de compte": "704300000",
+                "Numéro de pièce": facture, "Libellé": libelle,
+                "Débit": "", "Crédit": ht_facture
+            })
 
-                for taux in taux_non_nuls:
-                    ht_ligne = lignes_avec_ht.loc[lignes_avec_ht["Taux"] == taux, "HT_LIGNE"].sum()
-                    tva = round(ht_ligne * taux / 100, 2)
-                    tva_totale += tva
-
-                    ecritures.append({
-                        "Date": date, "Journal": "VT", "Numéro de compte": "445740000",
-                        "Numéro de pièce": facture,
-                        "Libellé": f"{libelle} TVA {taux}%",
-                        "Débit": "", "Crédit": tva
-                    })
-
-                ttc = round(ht_facture + tva_totale, 2)
-
-                ecritures.append({
-                    "Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
-                    "Numéro de pièce": facture, "Libellé": libelle,
-                    "Débit": ttc, "Crédit": ""
-                })
-
-                ecritures.append({
-                    "Date": date, "Journal": "VT", "Numéro de compte": "704300000",
-                    "Numéro de pièce": facture, "Libellé": libelle,
-                    "Débit": "", "Crédit": ht_facture
-                })
-
-    # ============================================================
-    # SORTIE
-    # ============================================================
     df_out = pd.DataFrame(ecritures)
+
     st.success(f"✅ {df_out['Numéro de pièce'].nunique()} factures générées")
     st.dataframe(df_out)
+
+    # ====================================================
+    # 📥 EXPORT EXCEL
+    # ====================================================
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        df_out.to_excel(writer, index=False, sheet_name="Ecritures")
+    buffer.seek(0)
+
+    st.download_button(
+        label="📥 Télécharger le fichier Excel",
+        data=buffer,
+        file_name="ecritures_ventes.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
