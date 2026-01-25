@@ -38,10 +38,6 @@ st.set_page_config(page_title="Générateur écritures ventes", page_icon="📘"
 st.title("📘 Générateur d'écritures comptables – Ventes")
 st.caption(f"Connecté en tant que **{st.session_state['name']}**")
 
-if st.button("🔓 Déconnexion"):
-    st.session_state["login"] = False
-    st.rerun()
-
 uploaded_file = st.file_uploader("📂 Fichier Excel Factura", type=["xls", "xlsx"])
 
 # ============================================================
@@ -94,96 +90,78 @@ if uploaded_file:
         date = g["Date"].iloc[0]
         client = g["Client"].iloc[0]
         ht_facture = g["HT_FACTURE"].max()
-        taux_uniques = g["Taux"].unique()
-
         libelle = f"Facture {facture} - {client}"
         compte_cli = compte_client(client)
 
-        # =========================
-        # MONO TVA
-        # =========================
-        if len(taux_uniques) == 1:
-            taux = taux_uniques[0]
+        ventilation = (
+            g.groupby("Taux")["HT_LIGNE"]
+            .sum()
+            .reset_index()
+        )
+
+        ventilation = ventilation[ventilation["HT_LIGNE"] != 0]
+
+        # ======================
+        # REQUALIFICATION MONO TVA
+        # ======================
+        if len(ventilation) == 1:
+            taux = ventilation.iloc[0]["Taux"]
             tva = round(ht_facture * taux / 100, 2)
             ttc = round(ht_facture + tva, 2)
 
             ecritures += [
-                {
-                    "Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
-                    "Numéro de pièce": facture, "Libellé": libelle,
-                    "Débit": ttc, "Crédit": ""
-                },
-                {
-                    "Date": date, "Journal": "VT",
-                    "Numéro de compte": compte_vente_mono(taux),
-                    "Numéro de pièce": facture, "Libellé": libelle,
-                    "Débit": "", "Crédit": ht_facture
-                }
+                {"Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
+                 "Numéro de pièce": facture, "Libellé": libelle,
+                 "Débit": ttc, "Crédit": ""},
+                {"Date": date, "Journal": "VT",
+                 "Numéro de compte": compte_vente_mono(taux),
+                 "Numéro de pièce": facture, "Libellé": libelle,
+                 "Débit": "", "Crédit": ht_facture},
+                {"Date": date, "Journal": "VT",
+                 "Numéro de compte": "445740000",
+                 "Numéro de pièce": facture, "Libellé": libelle,
+                 "Débit": "", "Crédit": tva}
             ]
 
-            if tva != 0:
-                ecritures.append({
-                    "Date": date, "Journal": "VT", "Numéro de compte": "445740000",
-                    "Numéro de pièce": facture, "Libellé": libelle,
-                    "Débit": "", "Crédit": tva
-                })
-
-        # =========================
-        # MULTI TVA (SÉCURISÉ)
-        # =========================
+        # ======================
+        # VRAIE MULTI TVA
+        # ======================
         else:
             tva_totale = 0
 
-            for taux in taux_uniques:
-                ht_lignes = g.loc[
-                    (g["Taux"] == taux) & (g["HT_LIGNE"] != 0),
-                    "HT_LIGNE"
-                ].sum()
-
-                if ht_lignes == 0:
-                    continue
-
-                tva_ligne = round(ht_lignes * taux / 100, 2)
+            for _, row in ventilation.iterrows():
+                tva_ligne = round(row["HT_LIGNE"] * row["Taux"] / 100, 2)
                 tva_totale += tva_ligne
 
                 ecritures.append({
-                    "Date": date, "Journal": "VT", "Numéro de compte": "445740000",
+                    "Date": date, "Journal": "VT",
+                    "Numéro de compte": "445740000",
                     "Numéro de pièce": facture,
-                    "Libellé": f"{libelle} TVA {taux}%",
+                    "Libellé": f"{libelle} TVA {row['Taux']}%",
                     "Débit": "", "Crédit": tva_ligne
                 })
 
             ttc = round(ht_facture + tva_totale, 2)
 
             ecritures += [
-                {
-                    "Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
-                    "Numéro de pièce": facture, "Libellé": libelle,
-                    "Débit": ttc, "Crédit": ""
-                },
-                {
-                    "Date": date, "Journal": "VT", "Numéro de compte": "704300000",
-                    "Numéro de pièce": facture, "Libellé": libelle,
-                    "Débit": "", "Crédit": ht_facture
-                }
+                {"Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
+                 "Numéro de pièce": facture, "Libellé": libelle,
+                 "Débit": ttc, "Crédit": ""},
+                {"Date": date, "Journal": "VT",
+                 "Numéro de compte": "704300000",
+                 "Numéro de pièce": facture, "Libellé": libelle,
+                 "Débit": "", "Crédit": ht_facture}
             ]
 
     df_out = pd.DataFrame(ecritures)
 
-    st.success(f"✅ {df_out['Numéro de pièce'].nunique()} factures générées")
-    st.dataframe(df_out.head(25))
-
-    # ========================================================
-    # 📥 EXPORT EXCEL
-    # ========================================================
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_out.to_excel(writer, index=False, sheet_name="Écritures")
-
     output.seek(0)
 
     st.download_button(
-        "📥 Télécharger les écritures comptables (Excel)",
+        "📥 Télécharger les écritures comptables",
         data=output,
         file_name="ecritures_ventes.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
