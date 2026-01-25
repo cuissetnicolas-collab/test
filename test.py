@@ -12,19 +12,19 @@ def login(username, password):
     users = {
         "aurore": {"password": "12345", "name": "Aurore Demoulin"},
         "laure.froidefond": {"password": "Laure2019$", "name": "Laure Froidefond"},
-        "Bruno": {"password": "Toto1963$", "name": "Toto El Gringo"},
-        "Manana": {"password": "193827", "name": "Manana"}
+        "bruno": {"password": "Toto1963$", "name": "Toto El Gringo"},
+        "manana": {"password": "193827", "name": "Manana"}
     }
-    if username in users and password == users[username]["password"]:
+    if username.lower() in users and password == users[username.lower()]["password"]:
         st.session_state["login"] = True
-        st.session_state["name"] = users[username]["name"]
+        st.session_state["name"] = users[username.lower()]["name"]
         st.rerun()
     else:
         st.error("❌ Identifiants incorrects")
 
 if not st.session_state["login"]:
     st.set_page_config(page_title="Connexion", layout="centered")
-    st.title("🔑 Connexion espace expert-comptable")
+    st.title("🔑 Connexion – Générateur comptable")
     username = st.text_input("Identifiant")
     password = st.text_input("Mot de passe", type="password")
     if st.button("Connexion"):
@@ -32,9 +32,9 @@ if not st.session_state["login"]:
     st.stop()
 
 # ============================================================
-# 🎯 PAGE PRINCIPALE
+# 🎯 INTERFACE
 # ============================================================
-st.set_page_config(page_title="Générateur écritures ventes", page_icon="📘", layout="centered")
+st.set_page_config(page_title="Écritures de ventes", page_icon="📘", layout="centered")
 st.title("📘 Générateur d'écritures comptables – Ventes")
 st.caption(f"Connecté en tant que **{st.session_state['name']}**")
 
@@ -98,55 +98,76 @@ if uploaded_file:
         compte_cli = compte_client(client)
         libelle = f"Facture {facture} - {client}"
 
-        # ======================
+        # ====================================================
         # MONO TVA
-        # ======================
+        # ====================================================
         if len(taux_uniques) == 1:
             taux = taux_uniques[0]
             tva = round(ht_facture * taux / 100, 2)
             ttc = round(ht_facture + tva, 2)
 
-            ecritures += [
+            ecritures.extend([
                 {"Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
                  "Numéro de pièce": facture, "Libellé": libelle, "Débit": ttc, "Crédit": ""},
                 {"Date": date, "Journal": "VT", "Numéro de compte": compte_vente_mono(taux),
                  "Numéro de pièce": facture, "Libellé": libelle, "Débit": "", "Crédit": ht_facture}
-            ]
+            ])
 
             if tva != 0:
                 ecritures.append({
-                    "Date": date, "Journal": "VT", "Numéro de compte": "445740000",
-                    "Numéro de pièce": facture, "Libellé": libelle, "Débit": "", "Crédit": tva
+                    "Date": date, "Journal": "VT", "Numéro de compte": "445710000",
+                    "Numéro de pièce": facture, "Libellé": libelle,
+                    "Débit": "", "Crédit": tva
                 })
 
-        # ======================
-        # MULTI TVA (LIGNE PAR LIGNE)
-        # ======================
+        # ====================================================
+        # MULTI TVA (SÉCURISÉ)
+        # ====================================================
         else:
             tva_totale = 0
 
-            for taux in taux_uniques:
-                ht_lignes = g.loc[g["Taux"] == taux, "HT_LIGNE"].sum()
-                tva_ligne = round(ht_lignes * taux / 100, 2)
-                tva_totale += tva_ligne
+            lignes_valides = g[g["HT_LIGNE"] != 0]
 
-                if tva_ligne != 0:
+            for taux, sous_groupe in lignes_valides.groupby("Taux"):
+                ht_taux = sous_groupe["HT_LIGNE"].sum()
+                tva = round(ht_taux * taux / 100, 2)
+                tva_totale += tva
+
+                if tva != 0:
                     ecritures.append({
-                        "Date": date, "Journal": "VT", "Numéro de compte": "445740000",
+                        "Date": date,
+                        "Journal": "VT",
+                        "Numéro de compte": "445710000",
                         "Numéro de pièce": facture,
                         "Libellé": f"{libelle} TVA {taux}%",
-                        "Débit": "", "Crédit": tva_ligne
+                        "Débit": "",
+                        "Crédit": tva
                     })
 
             ttc = round(ht_facture + tva_totale, 2)
 
-            ecritures += [
+            ecritures.extend([
                 {"Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
                  "Numéro de pièce": facture, "Libellé": libelle, "Débit": ttc, "Crédit": ""},
                 {"Date": date, "Journal": "VT", "Numéro de compte": "704300000",
                  "Numéro de pièce": facture, "Libellé": libelle, "Débit": "", "Crédit": ht_facture}
-            ]
+            ])
 
     df_out = pd.DataFrame(ecritures)
+
     st.success(f"✅ {df_out['Numéro de pièce'].nunique()} factures générées")
-    st.dataframe(df_out.head(20))
+    st.dataframe(df_out.head(30))
+
+    # ====================================================
+    # 📥 TÉLÉCHARGEMENT
+    # ====================================================
+    buffer = BytesIO()
+    df_out.to_csv(buffer, sep=";", index=False, encoding="utf-8-sig")
+    buffer.seek(0)
+
+    st.download_button(
+        label="📥 Télécharger les écritures comptables",
+        data=buffer,
+        file_name="ecritures_ventes.csv",
+        mime="text/csv"
+    )
