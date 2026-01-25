@@ -12,7 +12,7 @@ def login(username, password):
     users = {
         "aurore": {"password": "12345", "name": "Aurore Demoulin"},
         "laure.froidefond": {"password": "Laure2019$", "name": "Laure Froidefond"},
-        "Bruno": {"password": "Toto1963$", "name": "Bruno"},
+        "Bruno": {"password": "Toto1963$", "name": "Toto El Gringo"},
         "Manana": {"password": "193827", "name": "Manana"}
     }
     if username in users and password == users[username]["password"]:
@@ -24,7 +24,7 @@ def login(username, password):
 
 if not st.session_state["login"]:
     st.set_page_config(page_title="Connexion", layout="centered")
-    st.title("🔑 Connexion – Générateur d’écritures")
+    st.title("🔑 Connexion espace expert-comptable")
     username = st.text_input("Identifiant")
     password = st.text_input("Mot de passe", type="password")
     if st.button("Connexion"):
@@ -34,8 +34,8 @@ if not st.session_state["login"]:
 # ============================================================
 # 🎯 PAGE PRINCIPALE
 # ============================================================
-st.set_page_config(page_title="Écritures ventes", page_icon="📘", layout="centered")
-st.title("📘 Générateur d’écritures comptables – Ventes")
+st.set_page_config(page_title="Générateur écritures ventes", page_icon="📘", layout="centered")
+st.title("📘 Générateur d'écritures comptables – Ventes")
 st.caption(f"Connecté en tant que **{st.session_state['name']}**")
 
 if st.button("🔓 Déconnexion"):
@@ -45,7 +45,7 @@ if st.button("🔓 Déconnexion"):
 uploaded_file = st.file_uploader("📂 Fichier Excel Factura", type=["xls", "xlsx"])
 
 # ============================================================
-# 🧠 FONCTIONS
+# 🧠 FONCTIONS UTILITAIRES
 # ============================================================
 def clean_amount(x):
     if pd.isna(x):
@@ -66,7 +66,7 @@ def compte_vente_mono(taux):
     }.get(taux, "704300000")
 
 # ============================================================
-# 🚀 TRAITEMENT
+# 🚀 TRAITEMENT DU FICHIER
 # ============================================================
 if uploaded_file:
     df = pd.read_excel(uploaded_file, dtype=str)
@@ -97,33 +97,32 @@ if uploaded_file:
         compte_cli = compte_client(client)
         libelle = f"Facture {facture} - {client}"
 
-        # Taux réellement exploitables
-        taux_non_nuls = sorted(t for t in g["Taux"].unique() if t != 0)
+        # 🔎 TAUX NON NULS UNIQUES
+        taux_reels = sorted(t for t in g["Taux"].unique() if t != 0)
 
         # ====================================================
         # MONO TVA
         # ====================================================
-        if len(taux_non_nuls) <= 1:
-            taux = taux_non_nuls[0] if taux_non_nuls else 0.0
+        if len(taux_reels) <= 1:
+            taux = taux_reels[0] if taux_reels else 0.0
             tva = round(ht_facture * taux / 100, 2)
             ttc = round(ht_facture + tva, 2)
 
-            ecritures.append({
-                "Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
-                "Numéro de pièce": facture, "Libellé": libelle,
-                "Débit": ttc, "Crédit": ""
-            })
+            ecritures += [
+                {"Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
+                 "Numéro de pièce": facture, "Libellé": libelle,
+                 "Débit": ttc, "Crédit": ""},
 
-            ecritures.append({
-                "Date": date, "Journal": "VT",
-                "Numéro de compte": compte_vente_mono(taux),
-                "Numéro de pièce": facture, "Libellé": libelle,
-                "Débit": "", "Crédit": ht_facture
-            })
+                {"Date": date, "Journal": "VT",
+                 "Numéro de compte": compte_vente_mono(taux),
+                 "Numéro de pièce": facture, "Libellé": libelle,
+                 "Débit": "", "Crédit": ht_facture}
+            ]
 
             if tva != 0:
                 ecritures.append({
-                    "Date": date, "Journal": "VT", "Numéro de compte": "445740000",
+                    "Date": date, "Journal": "VT",
+                    "Numéro de compte": "445740000",
                     "Numéro de pièce": facture, "Libellé": libelle,
                     "Débit": "", "Crédit": tva
                 })
@@ -134,55 +133,53 @@ if uploaded_file:
         else:
             tva_totale = 0.0
 
-            for taux in taux_non_nuls:
-                base_ht = g.loc[
-                    (g["Taux"] == taux) & (g["HT_LIGNE"] != 0),
-                    "HT_LIGNE"
-                ].sum()
+            for taux in taux_reels:
+                ht_taux = g.loc[g["Taux"] == taux, "HT_LIGNE"].sum()
+                tva_taux = round(ht_taux * taux / 100, 2)
+                tva_totale += tva_taux
 
-                if base_ht == 0:
-                    continue
-
-                tva_ligne = round(base_ht * taux / 100, 2)
-                tva_totale += tva_ligne
-
-                ecritures.append({
-                    "Date": date, "Journal": "VT", "Numéro de compte": "445740000",
-                    "Numéro de pièce": facture,
-                    "Libellé": f"{libelle} TVA {taux}%",
-                    "Débit": "", "Crédit": tva_ligne
-                })
+                if tva_taux != 0:
+                    ecritures.append({
+                        "Date": date, "Journal": "VT",
+                        "Numéro de compte": "445740000",
+                        "Numéro de pièce": facture,
+                        "Libellé": f"{libelle} TVA {taux}%",
+                        "Débit": "", "Crédit": tva_taux
+                    })
 
             ttc = round(ht_facture + tva_totale, 2)
 
-            ecritures.append({
-                "Date": date, "Journal": "VT", "Numéro de compte": compte_cli,
-                "Numéro de pièce": facture, "Libellé": libelle,
-                "Débit": ttc, "Crédit": ""
-            })
+            ecritures += [
+                {"Date": date, "Journal": "VT",
+                 "Numéro de compte": compte_cli,
+                 "Numéro de pièce": facture, "Libellé": libelle,
+                 "Débit": ttc, "Crédit": ""},
 
-            ecritures.append({
-                "Date": date, "Journal": "VT", "Numéro de compte": "704300000",
-                "Numéro de pièce": facture, "Libellé": libelle,
-                "Débit": "", "Crédit": ht_facture
-            })
+                {"Date": date, "Journal": "VT",
+                 "Numéro de compte": "704300000",
+                 "Numéro de pièce": facture, "Libellé": libelle,
+                 "Débit": "", "Crédit": ht_facture}
+            ]
 
+    # ============================================================
+    # 📊 SORTIE & EXPORT
+    # ============================================================
     df_out = pd.DataFrame(ecritures)
 
     st.success(f"✅ {df_out['Numéro de pièce'].nunique()} factures générées")
-    st.dataframe(df_out)
+    st.dataframe(df_out.head(30))
 
-    # ====================================================
-    # 📥 EXPORT EXCEL
-    # ====================================================
     buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df_out.to_excel(writer, index=False, sheet_name="Ecritures")
     buffer.seek(0)
 
     st.download_button(
-        label="📥 Télécharger le fichier Excel",
+        "📥 Télécharger les écritures Excel",
         data=buffer,
         file_name="ecritures_ventes.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+else:
+    st.info("⬆️ Charge un fichier Excel Factura pour commencer")
