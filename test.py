@@ -81,12 +81,20 @@ if uploaded_file:
 
             # Libellé et compte client
             if pd.isna(nom_val) or str(nom_val).strip() == "":
-                libelle = "Encaissement client"
-                premiere_lettre = "X"
+                # Nom absent
+                if pd.isna(facture_val) or str(facture_val).strip() == "":
+                    libelle = "Encaissement client"
+                else:
+                    try:
+                        facture_num = int(float(facture_val))
+                    except:
+                        facture_num = facture_val
+                    libelle = f"Encaissement client - Facture {facture_num}"
+                compte_client = "411CAISSE"
             else:
+                # Nom présent
                 nom = str(nom_val).strip()
                 premiere_lettre = nom[0].upper()
-                # Numéro de facture
                 if pd.isna(facture_val) or str(facture_val).strip() == "":
                     libelle = f"Encaissement {nom}"
                 else:
@@ -95,8 +103,7 @@ if uploaded_file:
                     except:
                         facture_num = facture_val
                     libelle = f"Encaissement {nom} - Facture {facture_num}"
-
-            compte_client = f"411{premiere_lettre}0000"
+                compte_client = f"411{premiere_lettre}0000"
 
             # Débit caisse
             data.append([date, "CA", "530000000", libelle, round(montant, 2), ""])
