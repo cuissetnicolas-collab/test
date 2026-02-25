@@ -40,9 +40,9 @@ if not st.session_state["login"]:
 st.title("🏦 Génération d’écritures comptables - Journal de caisse")
 
 uploaded_file = st.file_uploader(
-    "📤 Importer le fichier de caisse",
+    "📤 Importer le fichier Excel de caisse",
     type=["xlsx", "xls"]
-)("📤 Importer le fichier Excel de caisse", type=["xlsx"])
+)
 
 if uploaded_file:
 
