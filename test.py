@@ -77,16 +77,18 @@ if uploaded_file:
             if montant == 0:
                 continue
 
-            premiere_lettre = nom[0].upper()
+            premiere_lettre = nom[0].upper() if nom else "X"
             compte_client = f"411{premiere_lettre}0000"
+
+            libelle = f"Encaissement {nom}" if nom else "Encaissement client"
 
             # Débit caisse
             data.append([date, "CA", "530000000",
-                         f"Encaissement {nom}",
+                         libelle,
                          round(montant, 2), ""])
             # Crédit client
             data.append([date, "CA", compte_client,
-                         f"Encaissement {nom}",
+                         libelle,
                          "", round(montant, 2)])
 
         # 🔴 TRAITEMENT SORTIES
@@ -120,13 +122,15 @@ if uploaded_file:
             else:
                 compte_fournisseur = "401CAISSE"
 
+            libelle = f"Paiement {nom}" if nom else "Paiement fournisseur"
+
             # Débit fournisseur
             data.append([date, "CA", compte_fournisseur,
-                         f"Paiement {nom}",
+                         libelle,
                          round(montant, 2), ""])
             # Crédit caisse
             data.append([date, "CA", "530000000",
-                         f"Paiement {nom}",
+                         libelle,
                          "", round(montant, 2)])
 
         # 📊 DATAFRAME FINAL
