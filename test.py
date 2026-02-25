@@ -46,27 +46,33 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
     try:
-        # Commencer à lire à partir de la 4ème ligne (index 3)
+        # Lecture à partir de la 4ème ligne
         df_source = pd.read_excel(uploaded_file, header=None, skiprows=3)
 
+        # ============================================================
+        # 🔵 TRAITEMENT ENTREES
+        # ============================================================
         df_entree = df_source.iloc[:, 0:4].copy()
         df_entree.columns = ["Nom", "Facture", "Date", "Montant"]
         df_entree = df_entree.dropna(subset=["Date", "Montant"])
         df_entree["Date"] = pd.to_datetime(df_entree["Date"], errors="coerce")
         df_entree = df_entree.dropna(subset=["Date"])
 
+        # ============================================================
+        # 🔴 TRAITEMENT SORTIES
+        # ============================================================
         df_sortie = df_source.iloc[:, 5:8].copy()
         df_sortie.columns = ["Nom", "Date", "Montant"]
         df_sortie = df_sortie.dropna(subset=["Date", "Montant"])
         df_sortie["Date"] = pd.to_datetime(df_sortie["Date"], errors="coerce")
         df_sortie = df_sortie.dropna(subset=["Date"])
 
+        # ============================================================
+        # 📊 CONSTRUCTION DES ÉCRITURES
+        # ============================================================
         data = []
 
-        # ============================================================
-        # 🔵 TRAITEMENT ENTREES
-        # ============================================================
-
+        # Traiter les entrées
         for _, row in df_entree.iterrows():
             nom = str(row["Nom"]).strip()
             date = row["Date"]
@@ -84,16 +90,12 @@ if uploaded_file:
             data.append([date, "CA", "530000000",
                          f"Encaissement {nom}",
                          round(montant, 2), ""])
-
             # Crédit client
             data.append([date, "CA", compte_client,
                          f"Encaissement {nom}",
                          "", round(montant, 2)])
 
-        # ============================================================
-        # 🔴 TRAITEMENT SORTIES
-        # ============================================================
-
+        # Traiter les sorties
         for _, row in df_sortie.iterrows():
             nom = str(row["Nom"]).strip()
             date = row["Date"]
@@ -119,7 +121,6 @@ if uploaded_file:
             data.append([date, "CA", compte_fournisseur,
                          f"Paiement {nom}",
                          round(montant, 2), ""])
-
             # Crédit caisse
             data.append([date, "CA", "530000000",
                          f"Paiement {nom}",
@@ -128,30 +129,31 @@ if uploaded_file:
         # ============================================================
         # 📊 DATAFRAME FINAL
         # ============================================================
-
         df_ecritures = pd.DataFrame(
             data,
             columns=["Date", "Journal", "Compte", "Libellé", "Débit", "Crédit"]
         )
 
+        # Formater la date au format court jj/mm/aaaa
+        df_ecritures["Date"] = pd.to_datetime(df_ecritures["Date"]).dt.strftime("%d/%m/%Y")
+
+        # Vérification équilibre
         debit_total = pd.to_numeric(df_ecritures["Débit"], errors="coerce").sum()
         credit_total = pd.to_numeric(df_ecritures["Crédit"], errors="coerce").sum()
-
         if round(debit_total, 2) == round(credit_total, 2):
             st.success(f"✅ Écritures équilibrées (Total = {debit_total:.2f} €)")
         else:
             st.error(f"❌ Déséquilibre : Débit={debit_total:.2f} / Crédit={credit_total:.2f}")
 
+        # Affichage
         st.dataframe(df_ecritures, use_container_width=True)
 
         # ============================================================
         # 💾 EXPORT EXCEL
         # ============================================================
-
         buffer = BytesIO()
         df_ecritures.to_excel(buffer, index=False, engine="openpyxl")
         buffer.seek(0)
-
         st.download_button(
             "📥 Télécharger les écritures",
             data=buffer,
