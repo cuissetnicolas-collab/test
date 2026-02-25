@@ -79,17 +79,22 @@ if uploaded_file:
             if montant == 0:
                 continue
 
-            # Libellé par défaut si Nom vide
+            # Libellé et compte client
             if pd.isna(nom_val) or str(nom_val).strip() == "":
                 libelle = "Encaissement client"
                 premiere_lettre = "X"
             else:
                 nom = str(nom_val).strip()
                 premiere_lettre = nom[0].upper()
+                # Numéro de facture
                 if pd.isna(facture_val) or str(facture_val).strip() == "":
                     libelle = f"Encaissement {nom}"
                 else:
-                    libelle = f"Encaissement {nom} - Facture {facture_val}"
+                    try:
+                        facture_num = int(float(facture_val))
+                    except:
+                        facture_num = facture_val
+                    libelle = f"Encaissement {nom} - Facture {facture_num}"
 
             compte_client = f"411{premiere_lettre}0000"
 
