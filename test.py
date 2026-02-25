@@ -69,7 +69,9 @@ if uploaded_file:
         # 🔵 TRAITEMENT ENTRÉES
         for _, row in df_entree.iterrows():
             nom_val = row["Nom"]
+            facture_val = row["Facture"]
             date = row["Date"]
+
             try:
                 montant = float(str(row["Montant"]).replace(" ", "").replace(",", "."))
             except:
@@ -77,14 +79,17 @@ if uploaded_file:
             if montant == 0:
                 continue
 
-            # Gestion libellé par défaut
+            # Libellé par défaut si Nom vide
             if pd.isna(nom_val) or str(nom_val).strip() == "":
                 libelle = "Encaissement client"
                 premiere_lettre = "X"
             else:
                 nom = str(nom_val).strip()
-                libelle = f"Encaissement {nom}"
                 premiere_lettre = nom[0].upper()
+                if pd.isna(facture_val) or str(facture_val).strip() == "":
+                    libelle = f"Encaissement {nom}"
+                else:
+                    libelle = f"Encaissement {nom} - Facture {facture_val}"
 
             compte_client = f"411{premiere_lettre}0000"
 
@@ -106,6 +111,7 @@ if uploaded_file:
         for _, row in df_sortie.iterrows():
             nom_val = row["Nom"]
             date = row["Date"]
+
             try:
                 montant = float(str(row["Montant"]).replace(" ", "").replace(",", "."))
             except:
@@ -113,7 +119,7 @@ if uploaded_file:
             if montant == 0:
                 continue
 
-            # Gestion libellé par défaut
+            # Libellé par défaut si Nom vide
             if pd.isna(nom_val) or str(nom_val).strip() == "":
                 libelle = "Paiement fournisseur"
                 nom_lower = ""
