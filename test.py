@@ -49,30 +49,24 @@ if uploaded_file:
         # Lecture à partir de la 4ème ligne
         df_source = pd.read_excel(uploaded_file, header=None, skiprows=3)
 
-        # ============================================================
-        # 🔵 TRAITEMENT ENTREES
-        # ============================================================
+        # Entrées
         df_entree = df_source.iloc[:, 0:4].copy()
         df_entree.columns = ["Nom", "Facture", "Date", "Montant"]
         df_entree = df_entree.dropna(subset=["Date", "Montant"])
         df_entree["Date"] = pd.to_datetime(df_entree["Date"], errors="coerce")
         df_entree = df_entree.dropna(subset=["Date"])
 
-        # ============================================================
-        # 🔴 TRAITEMENT SORTIES
-        # ============================================================
+        # Sorties
         df_sortie = df_source.iloc[:, 5:8].copy()
         df_sortie.columns = ["Nom", "Date", "Montant"]
         df_sortie = df_sortie.dropna(subset=["Date", "Montant"])
         df_sortie["Date"] = pd.to_datetime(df_sortie["Date"], errors="coerce")
         df_sortie = df_sortie.dropna(subset=["Date"])
 
-        # ============================================================
-        # 📊 CONSTRUCTION DES ÉCRITURES
-        # ============================================================
+        # Construction des écritures
         data = []
 
-        # Traiter les entrées
+        # 🔵 TRAITEMENT ENTRÉES
         for _, row in df_entree.iterrows():
             nom = str(row["Nom"]).strip()
             date = row["Date"]
@@ -95,7 +89,16 @@ if uploaded_file:
                          f"Encaissement {nom}",
                          "", round(montant, 2)])
 
-        # Traiter les sorties
+        # 🔴 TRAITEMENT SORTIES
+        repas_list = [
+            "fonseca", "et patati", "la chaumiere", "les tuileries",
+            "le relai d'alcy", "ange", "miss delices", "auguste&ferdinand",
+            "le soleil du midi", "chez auriane et tanguy",
+            "carrefour express", "la taverne des gaulois",
+            "au coin de la reine", "burger king", "au fournil d'arras, lille",
+            "tao bento", "paul", "ch'ti boucanier", "cerrefour express"
+        ]
+
         for _, row in df_sortie.iterrows():
             nom = str(row["Nom"]).strip()
             date = row["Date"]
@@ -112,7 +115,7 @@ if uploaded_file:
             elif any(mot in nom_lower for mot in [
                 "boulangerie", "restaurant", "resto", "snack",
                 "mcdonald", "frite", "hambuscade", "basque"
-            ]):
+            ] + repas_list):
                 compte_fournisseur = "401100242"
             else:
                 compte_fournisseur = "401CAISSE"
@@ -126,15 +129,13 @@ if uploaded_file:
                          f"Paiement {nom}",
                          "", round(montant, 2)])
 
-        # ============================================================
         # 📊 DATAFRAME FINAL
-        # ============================================================
         df_ecritures = pd.DataFrame(
             data,
             columns=["Date", "Journal", "Compte", "Libellé", "Débit", "Crédit"]
         )
 
-        # Formater la date au format court jj/mm/aaaa
+        # Formater date courte
         df_ecritures["Date"] = pd.to_datetime(df_ecritures["Date"]).dt.strftime("%d/%m/%Y")
 
         # Vérification équilibre
@@ -148,9 +149,7 @@ if uploaded_file:
         # Affichage
         st.dataframe(df_ecritures, use_container_width=True)
 
-        # ============================================================
         # 💾 EXPORT EXCEL
-        # ============================================================
         buffer = BytesIO()
         df_ecritures.to_excel(buffer, index=False, engine="openpyxl")
         buffer.seek(0)
