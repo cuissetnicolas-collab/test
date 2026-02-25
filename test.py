@@ -45,48 +45,35 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file:
-
     try:
-        # Ligne 2 = en-têtes
-        df_source = pd.read_excel(uploaded_file, header=1)
+        # Commencer à lire à partir de la 4ème ligne (index 3)
+        df_source = pd.read_excel(uploaded_file, header=None, skiprows=3)
 
-        data = []
-
-        # ============================================================
-        # 🟢 SOLDE INITIAL (ligne 3)
-        # ============================================================
-
-        premiere_ligne = df_source.iloc[0]
-
-        if "solde" in str(premiere_ligne[0]).lower():
-            date_solde = premiere_ligne[2]
-            montant_solde = float(str(premiere_ligne[3]).replace(" ", "").replace(",", "."))
-
-            data.append([date_solde, "CAI", "530000",
-                         "Solde initial caisse",
-                         round(montant_solde, 2), ""])
-
-            data.append([date_solde, "CAI", "580000",
-                         "Solde initial caisse",
-                         "", round(montant_solde, 2)])
-
-            df_entree = df_source.iloc[1:, 0:4].copy()
-        else:
-            df_entree = df_source.iloc[:, 0:4].copy()
-
+        df_entree = df_source.iloc[:, 0:4].copy()
         df_entree.columns = ["Nom", "Facture", "Date", "Montant"]
         df_entree = df_entree.dropna(subset=["Date", "Montant"])
+        df_entree["Date"] = pd.to_datetime(df_entree["Date"], errors="coerce")
+        df_entree = df_entree.dropna(subset=["Date"])
+
+        df_sortie = df_source.iloc[:, 5:8].copy()
+        df_sortie.columns = ["Nom", "Date", "Montant"]
+        df_sortie = df_sortie.dropna(subset=["Date", "Montant"])
+        df_sortie["Date"] = pd.to_datetime(df_sortie["Date"], errors="coerce")
+        df_sortie = df_sortie.dropna(subset=["Date"])
+
+        data = []
 
         # ============================================================
         # 🔵 TRAITEMENT ENTREES
         # ============================================================
 
         for _, row in df_entree.iterrows():
-
             nom = str(row["Nom"]).strip()
             date = row["Date"]
-            montant = float(str(row["Montant"]).replace(" ", "").replace(",", "."))
-
+            try:
+                montant = float(str(row["Montant"]).replace(" ", "").replace(",", "."))
+            except:
+                continue
             if montant == 0:
                 continue
 
@@ -94,12 +81,12 @@ if uploaded_file:
             compte_client = f"411{premiere_lettre}0000"
 
             # Débit caisse
-            data.append([date, "CAI", "530000",
+            data.append([date, "CA", "530000000",
                          f"Encaissement {nom}",
                          round(montant, 2), ""])
 
             # Crédit client
-            data.append([date, "CAI", compte_client,
+            data.append([date, "CA", compte_client,
                          f"Encaissement {nom}",
                          "", round(montant, 2)])
 
@@ -107,21 +94,17 @@ if uploaded_file:
         # 🔴 TRAITEMENT SORTIES
         # ============================================================
 
-        df_sortie = df_source.iloc[:, 5:8].copy()
-        df_sortie.columns = ["Nom", "Date", "Montant"]
-        df_sortie = df_sortie.dropna(subset=["Date", "Montant"])
-
         for _, row in df_sortie.iterrows():
-
             nom = str(row["Nom"]).strip()
             date = row["Date"]
-            montant = float(str(row["Montant"]).replace(" ", "").replace(",", "."))
-
+            try:
+                montant = float(str(row["Montant"]).replace(" ", "").replace(",", "."))
+            except:
+                continue
             if montant == 0:
                 continue
 
             nom_lower = nom.lower()
-
             if "amazon" in nom_lower:
                 compte_fournisseur = "401100032"
             elif any(mot in nom_lower for mot in [
@@ -133,12 +116,12 @@ if uploaded_file:
                 compte_fournisseur = "401CAISSE"
 
             # Débit fournisseur
-            data.append([date, "CAI", compte_fournisseur,
+            data.append([date, "CA", compte_fournisseur,
                          f"Paiement {nom}",
                          round(montant, 2), ""])
 
             # Crédit caisse
-            data.append([date, "CAI", "530000",
+            data.append([date, "CA", "530000000",
                          f"Paiement {nom}",
                          "", round(montant, 2)])
 
