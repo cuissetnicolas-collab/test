@@ -68,7 +68,7 @@ if uploaded_file:
 
         # 🔵 TRAITEMENT ENTRÉES
         for _, row in df_entree.iterrows():
-            nom = str(row["Nom"]).strip()
+            nom_val = row["Nom"]
             date = row["Date"]
             try:
                 montant = float(str(row["Montant"]).replace(" ", "").replace(",", "."))
@@ -77,19 +77,21 @@ if uploaded_file:
             if montant == 0:
                 continue
 
-            premiere_lettre = nom[0].upper() if nom else "X"
+            # Gestion libellé par défaut
+            if pd.isna(nom_val) or str(nom_val).strip() == "":
+                libelle = "Encaissement client"
+                premiere_lettre = "X"
+            else:
+                nom = str(nom_val).strip()
+                libelle = f"Encaissement {nom}"
+                premiere_lettre = nom[0].upper()
+
             compte_client = f"411{premiere_lettre}0000"
 
-            libelle = f"Encaissement {nom}" if nom else "Encaissement client"
-
             # Débit caisse
-            data.append([date, "CA", "530000000",
-                         libelle,
-                         round(montant, 2), ""])
+            data.append([date, "CA", "530000000", libelle, round(montant, 2), ""])
             # Crédit client
-            data.append([date, "CA", compte_client,
-                         libelle,
-                         "", round(montant, 2)])
+            data.append([date, "CA", compte_client, libelle, "", round(montant, 2)])
 
         # 🔴 TRAITEMENT SORTIES
         repas_list = [
@@ -102,7 +104,7 @@ if uploaded_file:
         ]
 
         for _, row in df_sortie.iterrows():
-            nom = str(row["Nom"]).strip()
+            nom_val = row["Nom"]
             date = row["Date"]
             try:
                 montant = float(str(row["Montant"]).replace(" ", "").replace(",", "."))
@@ -111,7 +113,16 @@ if uploaded_file:
             if montant == 0:
                 continue
 
-            nom_lower = nom.lower()
+            # Gestion libellé par défaut
+            if pd.isna(nom_val) or str(nom_val).strip() == "":
+                libelle = "Paiement fournisseur"
+                nom_lower = ""
+            else:
+                nom = str(nom_val).strip()
+                libelle = f"Paiement {nom}"
+                nom_lower = nom.lower()
+
+            # Comptes fournisseurs
             if "amazon" in nom_lower:
                 compte_fournisseur = "401100032"
             elif any(mot in nom_lower for mot in [
@@ -122,16 +133,10 @@ if uploaded_file:
             else:
                 compte_fournisseur = "401CAISSE"
 
-            libelle = f"Paiement {nom}" if nom else "Paiement fournisseur"
-
             # Débit fournisseur
-            data.append([date, "CA", compte_fournisseur,
-                         libelle,
-                         round(montant, 2), ""])
+            data.append([date, "CA", compte_fournisseur, libelle, round(montant, 2), ""])
             # Crédit caisse
-            data.append([date, "CA", "530000000",
-                         libelle,
-                         "", round(montant, 2)])
+            data.append([date, "CA", "530000000", libelle, "", round(montant, 2)])
 
         # 📊 DATAFRAME FINAL
         df_ecritures = pd.DataFrame(
